@@ -1,0 +1,17 @@
+Terminal 1 — frontend (Vite):
+cd /Users/mac/tradingview-clone
+npm run dev
+Opens on http://localhost:5173 (or the next free port if that's taken — check the terminal output).
+
+Terminal 2 — backend (FastAPI + tvdatafeed):
+cd /Users/mac/tradingview-clone
+SSL_CERT_FILE=$(.venv/bin/python -m certifi) .venv/bin/python server.py
+Runs on http://localhost:4001. The SSL_CERT_FILE bit is required — without it you'll hit the SSLCertVerificationError we ran into earlier (macOS Python doesn't ship root CA certs by default).
+
+Then open the frontend URL in your browser.
+
+A few things to know:
+- If NSE_API/API in Chart.jsx (http://localhost:4001) ever needs to point elsewhere, that's the one place to change it.
+- To stop either one, Ctrl+C in its terminal.
+- If port 4001 is ever taken by something else, change the port in server.py's uvicorn.run(..., port=4001) and the API constant in Chart.jsx together — they have to match.
+- The .venv and node_
