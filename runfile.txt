@@ -15,3 +15,35 @@ A few things to know:
 - To stop either one, Ctrl+C in its terminal.
 - If port 4001 is ever taken by something else, change the port in server.py's uvicorn.run(..., port=4001) and the API constant in Chart.jsx together — they have to match.
 - The .venv and node_
+
+4 things need to run; only the frontend and server.py need public tunnels — webviewdataapi.py (the bot) just needs to be reachable on localhost:4100, since server.py proxies to it locally.
+
+Terminal 1 — trading bot (Flask, port 4100)
+cd ~/PycharmProjects/pythonProject/SmartApi
+python webviewdataapi.py
+
+Terminal 2 — backend (FastAPI, port 4001)
+cd /Users/mac/tradingview-clone
+SSL_CERT_FILE=$(.venv/bin/python -m certifi) .venv/bin/python server.py
+
+Terminal 3 — tunnel for the backend
+cloudflared tunnel --url http://localhost:4001
+Copy the printed https://xxxx.trycloudflare.com URL — this is your new BACKEND_URL.
+
+Terminal 4 — frontend (Vite, port 5173)
+cd /Users/mac/tradingview-clone
+npm run dev
+
+Terminal 5 — tunnel for the frontend
+cloudflared tunnel --url http://localhost:5173
+Copy that printed URL too — that's the one you open in the browser.
+
+Then patch the backend tunnel URL into both frontend files (they must match Terminal 3's URL exactly):
+- src/Chart.jsx:9 → const API = 'https://<terminal-3-url>'
+- src/TradingPanel.jsx:4 → const API = 'https://<terminal-3-url>'
+
+Vite hot-reloads, so saving those is enough — no restart of Terminal 4 needed.
+
+Note: webviewdataapi.py (port 4100) also needs ai_order_service.py on port 4104 if you use AI-triggered orders — same pattern, just python ai_order_service.py in its own terminal, no tunnel needed since server.py proxies to it locally too.
+
+That's exactly what start.sh automates (minus webviewdataapi.py/ai_order_service.py, which live outside this repo) — if you'd rather not run 5 terminals by hand, just use ./start.sh after starting the bot processes.s

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import AiOrderControls from './AiOrderControls'
 
-const API = 'http://localhost:4001'
+const API = 'https://pads-introduces-forum-holes.trycloudflare.com'
 
 function candleContext(symbol, candles) {
   return candles.length

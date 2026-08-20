@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git
 python-dotenv
+smartapi-python
+pyotp
+logzero

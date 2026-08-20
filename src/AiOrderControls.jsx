@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseContract, normalizeContract } from './contracts'
 
-const API = 'http://localhost:4001'
+const API = 'https://pads-introduces-forum-holes.trycloudflare.com'
 const TRADEABLE_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX']
 const OPTION_EXCHANGE = { NIFTY: 'NFO', BANKNIFTY: 'NFO', SENSEX: 'BFO' }
 

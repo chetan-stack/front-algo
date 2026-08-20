@@ -6,9 +6,12 @@ import AiChat from './AiChat'
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d']
 const RESOLUTION = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' }
 const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }
-const API = 'http://localhost:4001'
+const API = 'https://entertainment-marks-bradford-recruiting.trycloudflare.com'
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const EMA_COLORS = ['#2962ff', '#ff6d00', '#00c853', '#e91e63', '#9c27b0', '#00bcd4']
+// Same underlyings the ai_order_service.py backend supports (its `fochange` map) —
+// placing/exiting an order for anything else will just 400 server-side.
+const TRADEABLE_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX']
 
 function computeEMA(candles, period) {
   const k = 2 / (period + 1)
@@ -60,6 +63,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [pendingOrders, setPendingOrders] = useState([])
   const [orderEdit, setOrderEdit] = useState({ stoplosspoint: '', targetpoint: '' })
   const [orderBusy, setOrderBusy] = useState(false)
+  const [tradeBusy, setTradeBusy] = useState(false)
   const priceLinesRef = useRef([])
   const candlesRef = useRef([])
   const [aiOpen, setAiOpen] = useState(false)
@@ -86,6 +90,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [showEmaForm, setShowEmaForm] = useState(false)
   const [emaPeriod, setEmaPeriod] = useState('20')
   const emaSeriesRef = useRef({})
+  const [live, setLive] = useState(false)
+  const hasMatchedOrderRef = useRef(false)
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 1000)
@@ -110,6 +116,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     }
   }, [])
 
+  function pushToast(text, id = Date.now() + Math.random()) {
+    setToasts((t) => [...t, { id, text }])
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000)
+  }
+
   function checkAlerts(newPrice, sym) {
     const prev = lastPriceRef.current
     lastPriceRef.current = newPrice
@@ -127,8 +138,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: `🔔 Price alert: ${text}` }),
       }).catch(() => {})
-      setToasts((t) => [...t, { id: a.id, text }])
-      setTimeout(() => setToasts((t) => t.filter((x) => x.id !== a.id)), 6000)
+      pushToast(text, a.id)
     })
     setAlerts((prevAlerts) => prevAlerts.filter((a) => !hits.some((h) => h.id === a.id)))
   }
@@ -298,21 +308,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   useEffect(() => {
     let cancelled = false
     let pollId
+    let ws
+    let watchdogId
+    let lastPendingRefresh = 0
 
-    async function load() {
-      lastPriceRef.current = null
-      const resolution = RESOLUTION[interval]
-      const res = await fetch(`${API}/api/ohlcv?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&count=500`)
-      const data = await res.json()
-      if (cancelled || !data.success) return
-      const candles = data.bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }))
-      seriesRef.current.setData(candles)
-      candlesRef.current = candles
-      setPrice(candles.at(-1)?.close ?? null)
-      setNextClose(candles.at(-1) ? candles.at(-1).time + INTERVAL_SECONDS[interval] : null)
-      lastPriceRef.current = candles.at(-1)?.close ?? null
-      chartRef.current.timeScale().fitContent()
-
+    function startPoll() {
       pollId = setInterval(async () => {
         const r = await fetch(`${API}/api/quote?symbol=${encodeURIComponent(symbol)}`)
         const q = await r.json()
@@ -325,21 +325,113 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       }, 3000)
     }
 
+    // Live mode has no server-side bar, just a raw LTP tick — fold it into
+    // the in-progress last candle the same way the poll loop does.
+    function applyTick(closePrice) {
+      const last = candlesRef.current.at(-1)
+      if (cancelled || !last) return
+      const updated = { time: last.time, open: last.open, high: Math.max(last.high, closePrice), low: Math.min(last.low, closePrice), close: closePrice }
+      seriesRef.current.update(updated)
+      candlesRef.current = [...candlesRef.current.slice(0, -1), updated]
+      setPrice(closePrice)
+      checkAlerts(closePrice, symbol)
+
+      // Reuse the dashboard's own P&L calc (don't reimplement lot-size math
+      // here) — just ask for it right after a tick instead of waiting for
+      // the fixed 3s timer, so the pending-order P&L box tracks live price.
+      if (hasMatchedOrderRef.current) {
+        const now = Date.now()
+        if (now - lastPendingRefresh > 1000) {
+          lastPendingRefresh = now
+          loadPendingOrders()
+        }
+      }
+    }
+
+    function startLive() {
+      let lastTickAt = Date.now()
+      let alerted = false
+      ws = new WebSocket(`${API.replace('http', 'ws')}/ws/live?symbol=${encodeURIComponent(symbol)}`)
+      ws.onmessage = (e) => {
+        lastTickAt = Date.now()
+        alerted = false
+        applyTick(JSON.parse(e.data).price)
+      }
+      ws.onclose = () => {
+        clearInterval(watchdogId)
+        // Symbol not resolvable on SmartAPI, or the connection dropped — the
+        // "else old approach works" fallback, with a heads-up that it happened.
+        if (!cancelled && !pollId) {
+          pushToast(`Live feed unavailable for ${symbol} — showing polled data`)
+          startPoll()
+        }
+      }
+      ws.onerror = () => ws.close()
+      watchdogId = setInterval(() => {
+        if (cancelled || alerted || Date.now() - lastTickAt <= 15000) return
+        alerted = true
+        pushToast(`Live feed for ${symbol} hasn't returned data in 15s`)
+      }, 5000)
+    }
+
+    async function load() {
+      lastPriceRef.current = null
+      const resolution = RESOLUTION[interval]
+      let data
+      try {
+        const res = await fetch(`${API}/api/ohlcv?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&count=500`)
+        data = await res.json()
+      } catch {
+        data = { success: false }
+      }
+      if (cancelled) return
+      if (!data.success) {
+        pushToast(`Couldn't load chart for ${symbol}`)
+        return
+      }
+      const candles = data.bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }))
+      seriesRef.current.setData(candles)
+      candlesRef.current = candles
+      setPrice(candles.at(-1)?.close ?? null)
+      setNextClose(candles.at(-1) ? candles.at(-1).time + INTERVAL_SECONDS[interval] : null)
+      lastPriceRef.current = candles.at(-1)?.close ?? null
+      chartRef.current.timeScale().fitContent()
+
+      if (live) startLive()
+      else startPoll()
+    }
+
     load()
 
     return () => {
       cancelled = true
       clearInterval(pollId)
+      clearInterval(watchdogId)
+      ws?.close()
     }
-  }, [symbol, interval])
+  }, [symbol, interval, live])
 
   const rawSymbol = symbol.includes(':') ? symbol.split(':')[1] : symbol
   const chartContract = normalizeContract(parseContract(rawSymbol))
+  const isOptionTradeable = !!chartContract && TRADEABLE_UNDERLYINGS.includes(chartContract.underlying)
+  const isIndexTradeable = !chartContract && TRADEABLE_UNDERLYINGS.includes(rawSymbol)
   const matchedOrder = chartContract
     ? pendingOrders.find((o) => {
         const oc = normalizeContract(parseContract(o.symbol))
         return oc && oc.underlying === chartContract.underlying && oc.strike === chartContract.strike && oc.right === chartContract.right
       })
+    : null
+
+  useEffect(() => { hasMatchedOrderRef.current = !!matchedOrder }, [matchedOrder])
+
+  // The backend's stored `profit` is a snapshot (0/stale) until the order is
+  // actually exited — it isn't recomputed against current LTP while open. So
+  // for an open order, derive live rupee P&L the same way the backend does on
+  // exit ((ltp - entry) * lotsize) from `price`, which already tracks the
+  // live tick feed above; once exited, the backend's final rupee figure is
+  // the authoritative number and there's no more live price to derive from.
+  const livePnlPoints = matchedOrder && matchedOrder.orderterm !== 'exit' && matchedOrder.entryPrice != null && price != null && matchedOrder.lotsize
+    ? (matchedOrder.trend === 'buy' ? price - matchedOrder.entryPrice : matchedOrder.entryPrice - price) * matchedOrder.lotsize
     : null
 
   useEffect(() => {
@@ -393,6 +485,55 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     setOrderBusy(false)
   }
 
+  // Places a real order via ai_order_service.py (same endpoints AiOrderControls
+  // uses from the AI chat flow, just fired immediately instead of queued on an
+  // entry-price watch). That service's place_order() branches on the bot's
+  // "With money" config itself — orderId comes back as 1 for the dummy/paper
+  // fill, anything else means it actually hit the broker — so surface that
+  // instead of re-deriving it from a second config fetch.
+  async function placeOrder(direction) {
+    if (tradeBusy) return
+    setTradeBusy(true)
+    try {
+      const isOption = !!chartContract && TRADEABLE_UNDERLYINGS.includes(chartContract.underlying)
+      const endpoint = isOption ? '/api/trading/ai-enter-option-order' : '/api/trading/ai-enter-order'
+      const body = isOption
+        ? { underlying: chartContract.underlying, strike: chartContract.strike, right: chartContract.right === 'C' ? 'CE' : 'PE' }
+        : { underlying: rawSymbol, direction }
+      const res = await fetch(`${API}${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const d = await res.json()
+      pushToast(d.status === 'success'
+        ? `${d.orderId === 1 ? '📝 paper' : '💰 live'} order placed: ${d.symbol} x${d.lotsize} @ ${d.ltp}`
+        : `Order failed: ${d.message}`)
+      if (d.status === 'success') loadPendingOrders()
+    } catch {
+      pushToast('Order failed: could not reach order server')
+    }
+    setTradeBusy(false)
+  }
+
+  async function exitTrade() {
+    if (tradeBusy) return
+    const underlying = chartContract ? chartContract.underlying : rawSymbol
+    if (!confirm(`Exit the open ${underlying} position now via the broker? This may use real money depending on the bot's "With money" setting.`)) return
+    setTradeBusy(true)
+    try {
+      const res = await fetch(`${API}/api/trading/ai-exit-order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ underlying }),
+      })
+      const d = await res.json()
+      pushToast(d.status === 'success'
+        ? `${d.orderId === 1 ? '📝 paper' : '💰 live'} exit: ${d.symbol} @ ${d.exitPrice} (P/L ${Math.round(d.profit)})`
+        : `Exit failed: ${d.message}`)
+      if (d.status === 'success') loadPendingOrders()
+    } catch {
+      pushToast('Exit failed: could not reach order server')
+    }
+    setTradeBusy(false)
+  }
+
   function pick(r) {
     setSymbol(`${r.exchange}:${r.symbol}`)
     setLabel(`${r.exchange}:${r.symbol} — ${r.description}`)
@@ -404,10 +545,15 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     const [exchange, underlying] = symbol.split(':')
     setChain(null)
     setChainLoading(true)
-    const res = await fetch(`${API}/api/option-chain?underlying=${encodeURIComponent(underlying)}&exchange=${encodeURIComponent(exchange)}`)
-    const data = await res.json()
-    setChainLoading(false)
-    setChain(data.success ? data : { error: true })
+    try {
+      const res = await fetch(`${API}/api/option-chain?underlying=${encodeURIComponent(underlying)}&exchange=${encodeURIComponent(exchange)}`)
+      const data = await res.json()
+      setChain(data.success ? data : { error: true })
+    } catch {
+      setChain({ error: true })
+    } finally {
+      setChainLoading(false)
+    }
   }
 
   function addAiDrawings(data) {
@@ -475,6 +621,13 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         <select value={interval} onChange={(e) => setInterval_(e.target.value)}>
           {INTERVALS.map((i) => <option key={i} value={i}>{i}</option>)}
         </select>
+        <button
+          onClick={() => setLive((v) => !v)}
+          title="Stream ticks via SmartAPI websocket when available; falls back to polling otherwise"
+          style={{ background: live ? '#26a69a' : 'transparent', color: live ? '#131722' : '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+        >
+          {live ? '● Live' : 'Live'}
+        </button>
         {nextClose != null && (
           <span style={{ color: '#787b86', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
             {formatCountdown(Math.max(0, Math.round(nextClose - now)))}
@@ -589,6 +742,44 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         >
           AI
         </button>
+        {market !== 'crypto' && (isOptionTradeable || isIndexTradeable) && (
+          <div style={{ display: 'flex', gap: 6 }} title='Places a real order through the bot (or a paper fill if "With money" is off)'>
+            {isOptionTradeable && (
+              <button
+                onClick={() => placeOrder(chartContract.right === 'C' ? 'buy_ce' : 'buy_pe')}
+                disabled={tradeBusy}
+                style={{ background: '#26a69a', color: '#fff', border: '1px solid #26a69a', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+              >
+                {tradeBusy ? '…' : `Buy ${chartContract.right === 'C' ? 'CE' : 'PE'}`}
+              </button>
+            )}
+            {isIndexTradeable && (
+              <>
+                <button
+                  onClick={() => placeOrder('buy_ce')}
+                  disabled={tradeBusy}
+                  style={{ background: '#26a69a', color: '#fff', border: '1px solid #26a69a', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  {tradeBusy ? '…' : 'Buy CE'}
+                </button>
+                <button
+                  onClick={() => placeOrder('buy_pe')}
+                  disabled={tradeBusy}
+                  style={{ background: '#26a69a', color: '#fff', border: '1px solid #26a69a', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  {tradeBusy ? '…' : 'Buy PE'}
+                </button>
+              </>
+            )}
+            <button
+              onClick={exitTrade}
+              disabled={tradeBusy}
+              style={{ background: 'transparent', color: '#ef5350', border: '1px solid #ef5350', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+            >
+              {tradeBusy ? '…' : 'Exit'}
+            </button>
+          </div>
+        )}
       </div>
       <div ref={containerRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />
 
@@ -661,8 +852,10 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
             <span style={{ color: matchedOrder.trend === 'buy' ? '#26a69a' : '#ef5350' }}>{matchedOrder.trend}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ color: '#787b86' }}>P&amp;L</span>
-            <b style={{ color: profitColor(matchedOrder.profit) }}>{Math.round(matchedOrder.profit)}</b>
+            <span style={{ color: '#787b86' }}>P&amp;L {livePnlPoints != null ? '(live)' : ''}</span>
+            <b style={{ color: profitColor(livePnlPoints ?? matchedOrder.profit) }}>
+              {Math.round(livePnlPoints ?? matchedOrder.profit)}
+            </b>
           </div>
           {matchedOrder.entryPrice == null ? (
             <div style={{ color: '#787b86' }}>No entry price found for this order.</div>

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -6,9 +7,11 @@ from concurrent.futures import ThreadPoolExecutor
 import certifi
 import requests
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from tvDatafeed import TvDatafeed, Interval
+
+import live_feed
 
 load_dotenv()
 
@@ -89,6 +92,32 @@ def quote(symbol: str = "NSE:NIFTY"):
     df = fetch(symbol, "1", 1)
     ts, r = df.index[-1], df.iloc[-1]
     return {"success": True, "time": epoch(ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
+
+
+# Live ticks via SmartAPI's websocket, for the chart's "Live" toggle. If the
+# symbol isn't resolvable on SmartAPI (resolve() returns None — e.g. crypto,
+# unlisted contracts) the socket closes immediately and the frontend falls
+# back to polling /api/quote as before.
+@app.websocket("/ws/live")
+async def ws_live(websocket: WebSocket, symbol: str = "NSE:NIFTY"):
+    await websocket.accept()
+    resolved = await asyncio.to_thread(live_feed.resolve, symbol)
+    if resolved is None:
+        await websocket.close(code=4004)
+        return
+    exchange_type, token = resolved
+    queue = await live_feed.subscribe(exchange_type, token)
+    try:
+        while True:
+            tick = await queue.get()
+            await websocket.send_json({
+                "price": tick["last_traded_price"] / 100,
+                "time": tick["exchange_timestamp"] // 1000,
+            })
+    except WebSocketDisconnect:
+        pass
+    finally:
+        live_feed.unsubscribe(token, queue)
 
 
 @app.get("/api/search")
@@ -290,8 +319,28 @@ AI_SYSTEM_PROMPT = (
     "credit spread on range-bound premium decay), or stay out — with one line why. "
     "In a sideways market favor selling/theta strategies over directional buying, and say "
     "so. Skip disclaimers and pleasantries. If asked a plain question instead, answer it "
-    "directly in 1-3 sentences."
+    "directly in 1-3 sentences. If the user explicitly asks to place/buy an order on a "
+    "specific contract right now (e.g. 'place order on 24400 call in nifty', 'buy "
+    "BANKNIFTY 54000 PE'), call place_option_order with the extracted underlying, strike "
+    "and right instead of just describing it — only do this when they clearly want the "
+    "order placed immediately, not when they're just asking for an opinion."
 )
+PLACE_ORDER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "place_option_order",
+        "description": "Place a real BUY order on an index option contract immediately at the current market price.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "underlying": {"type": "string", "enum": ["NIFTY", "BANKNIFTY", "SENSEX"]},
+                "strike": {"type": "number"},
+                "right": {"type": "string", "enum": ["CE", "PE"], "description": "CE for call, PE for put"},
+            },
+            "required": ["underlying", "strike", "right"],
+        },
+    },
+}
 
 
 @app.post("/api/ai/chat")
@@ -318,12 +367,26 @@ def ai_chat(payload: dict = Body(...)):
             "model": "gpt-4o-mini",
             "messages": [{"role": "system", "content": AI_SYSTEM_PROMPT}, *messages],
             "max_tokens": 200,
+            "tools": [PLACE_ORDER_TOOL],
         },
         timeout=60,
     )
     if resp.status_code != 200:
         raise HTTPException(502, f"OpenAI request failed: {resp.text}")
-    reply = resp.json()["choices"][0]["message"]["content"]
+    message = resp.json()["choices"][0]["message"]
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        args = json.loads(tool_calls[0]["function"]["arguments"])
+        # ai_order_service.py expects strike as a string (same as every other caller
+        # of this proxy, e.g. AiOrderControls.jsx) — the tool schema emits a number.
+        order = trading_ai_enter_option_order({**args, "strike": str(int(args["strike"]))})
+        reply = (
+            f"Order placed: {order['symbol']} x{order['lotsize']} @ {order['ltp']} (id {order['orderId']})"
+            if order.get("status") == "success"
+            else f"Order failed: {order.get('message', 'unknown error')}"
+        )
+    else:
+        reply = message["content"]
     return {"success": True, "reply": reply}
 
 

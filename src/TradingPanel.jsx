@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { parseContract } from './contracts'
 
-const API = 'http://localhost:4001'
+const API = 'https://entertainment-marks-bradford-recruiting.trycloudflare.com'
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 8px', width: 90 }
 const th = { textAlign: 'left', padding: '6px 10px', color: '#787b86', fontWeight: 500, fontSize: 12, borderBottom: '1px solid #2a2e39' }
@@ -301,15 +301,22 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
-                <th style={th}>Script</th><th style={th}>Buy price</th><th style={th}>Exit price</th>
-                <th style={th}>Profit</th><th style={th}>Created</th>
+                <th style={th}>ID</th><th style={th}>Script</th><th style={th}>Token</th><th style={th}>Lot size</th>
+                <th style={th}>Buy price</th><th style={th}>Exit price</th><th style={th}>Trailing SL</th>
+                <th style={th}>Target price</th><th style={th}>Max price</th><th style={th}>Profit</th><th style={th}>Created</th>
               </tr></thead>
               <tbody>
                 {data.fetchdata.map((t) => (
                   <tr key={t.id}>
+                    <td style={td}>{t.id}</td>
                     <td style={td}>{t.script}</td>
+                    <td style={td}>{t.token}</td>
+                    <td style={td}>{t.lotsize}</td>
                     <td style={td}>{t.buyPrice}</td>
                     <td style={td}>{t.nltp}</td>
+                    <td style={td}>{t.trailing_stoploss_price}</td>
+                    <td style={td}>{t.target_price}</td>
+                    <td style={td}>{t.max_price_achieved}</td>
                     <td style={{ ...td, color: profitColor(t.profit) }}>{typeof t.profit === 'number' ? t.profit.toFixed(2) : t.profit}</td>
                     <td style={td}>{t.createddate}</td>
                   </tr>
