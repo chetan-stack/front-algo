@@ -34,10 +34,10 @@ for i in $(seq 1 30); do
 done
 
 if [ -n "$BACKEND_URL" ]; then
-  sed -i '' "s|^const API = '.*'|const API = '$BACKEND_URL'|" src/Chart.jsx src/TradingPanel.jsx src/AiChat.jsx
-  echo "patched Chart.jsx + TradingPanel.jsx + AiChat.jsx API -> $BACKEND_URL"
+  sed -i '' "s|^export const API = '.*'|export const API = '$BACKEND_URL'|" src/api.js
+  echo "patched src/api.js API -> $BACKEND_URL"
 else
-  echo "WARNING: backend tunnel URL didn't show up in time, Chart.jsx/TradingPanel.jsx not patched"
+  echo "WARNING: backend tunnel URL didn't show up in time, src/api.js not patched"
 fi
 
 FRONTEND_URL=""

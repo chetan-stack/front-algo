@@ -24,3 +24,5 @@ dist-ssr
 *.sln
 *.sw?
 .venv
+users.db
+__pycache__

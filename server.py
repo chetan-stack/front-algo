@@ -7,13 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 import certifi
 import requests
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from tvDatafeed import TvDatafeed, Interval
 
+import auth
 import live_feed
 
 load_dotenv()
+auth.init_db()
 
 # This Python (framework build) ships no CA trust store of its own, so raw ssl.SSLContext
 # (what tvDatafeed's websocket connection uses) fails cert verification even though
@@ -23,6 +25,27 @@ os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.post("/api/auth/login")
+def login(payload: dict = Body(...)):
+    user = auth.authenticate(payload.get("username", ""), payload.get("password", ""))
+    if user is None:
+        raise HTTPException(401, "invalid username or password")
+    token = auth.create_session(user["id"])
+    return {"success": True, "token": token, "username": user["username"], "selectclient": user["selectclient"]}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: str = Header(default=None)):
+    if authorization and authorization.startswith("Bearer "):
+        auth.delete_session(authorization.removeprefix("Bearer "))
+    return {"success": True}
+
+
+@app.get("/api/auth/me")
+def me(user=Depends(auth.get_current_user)):
+    return {"success": True, "username": user["username"], "selectclient": user["selectclient"]}
 
 # get_hist() opens a websocket on whatever instance calls it. A single shared
 # instance across concurrent requests races on the same connection and
@@ -199,38 +222,38 @@ TRADING_API = "http://localhost:4100"
 
 
 @app.get("/api/trading/dashboard")
-def trading_dashboard(date: str = None, selectclient: str = None):
+def trading_dashboard(date: str = None, selectclient: str = None, user=Depends(auth.get_current_user)):
     params = {k: v for k, v in {"date": date, "selectclient": selectclient}.items() if v}
     resp = requests.get(f"{TRADING_API}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/config")
-def trading_config(payload: dict = Body(...)):
+def trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{TRADING_API}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/order")
-def trading_order(payload: dict = Body(...)):
+def trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{TRADING_API}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/delete-order")
-def trading_delete_order(payload: dict = Body(...)):
+def trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{TRADING_API}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/exit-order")
-def trading_exit_order(payload: dict = Body(...)):
+def trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{TRADING_API}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/trading/pending-orders")
-def trading_pending_orders(selectclient: str = None):
+def trading_pending_orders(selectclient: str = None, user=Depends(auth.get_current_user)):
     params = {"selectclient": selectclient} if selectclient else {}
     resp = requests.get(f"{TRADING_API}/api/pending_orders", params=params, timeout=20)
     return resp.json()
@@ -244,19 +267,19 @@ AI_ORDER_API = "http://localhost:4104"
 
 
 @app.post("/api/trading/ai-enter-order")
-def trading_ai_enter_order(payload: dict = Body(...)):
+def trading_ai_enter_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{AI_ORDER_API}/api/ai/enter-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-exit-order")
-def trading_ai_exit_order(payload: dict = Body(...)):
+def trading_ai_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{AI_ORDER_API}/api/ai/exit-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-enter-option-order")
-def trading_ai_enter_option_order(payload: dict = Body(...)):
+def trading_ai_enter_option_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{AI_ORDER_API}/api/ai/enter-option-order", json=payload, timeout=30)
     return resp.json()
 
@@ -268,38 +291,38 @@ CRYPTO_TRADING_API = "http://localhost:4101"
 
 
 @app.get("/api/crypto/trading/dashboard")
-def crypto_trading_dashboard(date: str = None):
+def crypto_trading_dashboard(date: str = None, user=Depends(auth.get_current_user)):
     params = {"date": date} if date else {}
     resp = requests.get(f"{CRYPTO_TRADING_API}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/config")
-def crypto_trading_config(payload: dict = Body(...)):
+def crypto_trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{CRYPTO_TRADING_API}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/order")
-def crypto_trading_order(payload: dict = Body(...)):
+def crypto_trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{CRYPTO_TRADING_API}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/delete-order")
-def crypto_trading_delete_order(payload: dict = Body(...)):
+def crypto_trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{CRYPTO_TRADING_API}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/exit-order")
-def crypto_trading_exit_order(payload: dict = Body(...)):
+def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     resp = requests.post(f"{CRYPTO_TRADING_API}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/crypto/trading/pending-orders")
-def crypto_trading_pending_orders():
+def crypto_trading_pending_orders(user=Depends(auth.get_current_user)):
     resp = requests.get(f"{CRYPTO_TRADING_API}/api/pending_orders", timeout=20)
     return resp.json()
 
@@ -344,7 +367,7 @@ PLACE_ORDER_TOOL = {
 
 
 @app.post("/api/ai/chat")
-def ai_chat(payload: dict = Body(...)):
+def ai_chat(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY not configured on server")
     messages = payload.get("messages") or []
@@ -410,7 +433,7 @@ AI_ANALYZE_SYSTEM_PROMPT = (
 
 
 @app.post("/api/ai/analyze")
-def ai_analyze(payload: dict = Body(...)):
+def ai_analyze(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY not configured on server")
     image = payload.get("image")
@@ -444,7 +467,7 @@ def ai_analyze(payload: dict = Body(...)):
 # TRADING_API already points at) — reuses its bot token/chatids instead of
 # duplicating them here.
 @app.post("/api/telegram/alert")
-def telegram_alert(payload: dict = Body(...)):
+def telegram_alert(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     text = payload.get("text")
     if not text:
         raise HTTPException(400, "text required")

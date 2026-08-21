@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import AiOrderControls from './AiOrderControls'
-
-const API = 'https://ongoing-boards-click-using.trycloudflare.com'
+import { apiFetch } from './api'
 
 function candleContext(symbol, candles) {
   return candles.length
@@ -40,7 +39,7 @@ export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis,
     const image = takeScreenshot()
     const context = candleContext(symbol, getCandles().slice(-50))
     try {
-      const res = await fetch(`${API}/api/ai/analyze`, {
+      const res = await apiFetch(`/api/ai/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image, context }),
@@ -71,7 +70,7 @@ export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis,
     const context = candleContext(symbol, getCandles().slice(-50))
 
     try {
-      const res = await fetch(`${API}/api/ai/chat`, {
+      const res = await apiFetch(`/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

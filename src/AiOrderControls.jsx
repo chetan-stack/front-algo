@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseContract, normalizeContract } from './contracts'
+import { apiFetch } from './api'
 
-const API = 'https://pads-introduces-forum-holes.trycloudflare.com'
 const TRADEABLE_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX']
 const OPTION_EXCHANGE = { NIFTY: 'NFO', BANKNIFTY: 'NFO', SENSEX: 'BFO' }
 
@@ -51,7 +51,7 @@ export default function AiOrderControls({ symbol, direction, entry, target, stop
     let cancelled = false
     const pollId = setInterval(async () => {
       try {
-        const res = await fetch(`${API}/api/quote?symbol=${encodeURIComponent(symbol)}`)
+        const res = await apiFetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
         const q = await res.json()
         if (cancelled || !q.success) return
         const prev = lastPriceRef.current
@@ -62,7 +62,7 @@ export default function AiOrderControls({ symbol, direction, entry, target, stop
 
         setPending(null)
         setBusy(true)
-        const orderRes = await fetch(`${API}${pending.endpoint}`, {
+        const orderRes = await apiFetch(`${pending.endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(pending.body),
@@ -94,7 +94,7 @@ export default function AiOrderControls({ symbol, direction, entry, target, stop
     let cancelled = false
     const pollId = setInterval(async () => {
       try {
-        const res = await fetch(`${API}/api/quote?symbol=${encodeURIComponent(trailing.quoteSymbol)}`)
+        const res = await apiFetch(`/api/quote?symbol=${encodeURIComponent(trailing.quoteSymbol)}`)
         const q = await res.json()
         if (cancelled || !q.success) return
 
@@ -103,7 +103,7 @@ export default function AiOrderControls({ symbol, direction, entry, target, stop
         if (q.close <= stopLevel) {
           setTrailing(null)
           setBusy(true)
-          const res2 = await fetch(`${API}/api/trading/ai-exit-order`, {
+          const res2 = await apiFetch(`/api/trading/ai-exit-order`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ underlying }),
@@ -150,7 +150,7 @@ export default function AiOrderControls({ symbol, direction, entry, target, stop
     setTrailing(null)
     setBusy(true)
     try {
-      const res = await fetch(`${API}/api/trading/ai-exit-order`, {
+      const res = await apiFetch(`/api/trading/ai-exit-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ underlying }),

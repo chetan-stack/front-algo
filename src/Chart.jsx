@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { createChart, CandlestickSeries, LineSeries, LineStyle } from 'lightweight-charts'
 import { parseContract, normalizeContract } from './contracts'
 import AiChat from './AiChat'
+import { API, apiFetch } from './api'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d']
 const RESOLUTION = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' }
 const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }
-const API = 'https://ongoing-boards-click-using.trycloudflare.com'
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const EMA_COLORS = ['#2962ff', '#ff6d00', '#00c853', '#e91e63', '#9c27b0', '#00bcd4']
 // Same underlyings the ai_order_service.py backend supports (its `fochange` map) —
@@ -134,7 +134,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         new Notification('Price alert', { body: text })
       }
-      fetch(`${API}/api/telegram/alert`, {
+      apiFetch(`/api/telegram/alert`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: `🔔 Price alert: ${text}` }),
       }).catch(() => {})
@@ -151,7 +151,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   }
 
   async function loadPendingOrders() {
-    const res = await fetch(`${API}${tradingPrefix}/pending-orders`)
+    const res = await apiFetch(`${tradingPrefix}/pending-orders`)
     const data = await res.json()
     if (data.status === 'success') setPendingOrders(data.orders)
   }
@@ -298,7 +298,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     let cancelled = false
     const id = setTimeout(async () => {
       const type = optionsOnly ? '&type=options' : ''
-      const res = await fetch(`${API}/api/search?query=${encodeURIComponent(query)}${type}`)
+      const res = await apiFetch(`/api/search?query=${encodeURIComponent(query)}${type}`)
       const data = await res.json()
       if (!cancelled && data.success) setResults(data.results)
     }, 300)
@@ -314,7 +314,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
 
     function startPoll() {
       pollId = setInterval(async () => {
-        const r = await fetch(`${API}/api/quote?symbol=${encodeURIComponent(symbol)}`)
+        const r = await apiFetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
         const q = await r.json()
         if (cancelled || !q.success) return
         seriesRef.current.update({ time: q.time, open: q.open, high: q.high, low: q.low, close: q.close })
@@ -379,7 +379,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       const resolution = RESOLUTION[interval]
       let data
       try {
-        const res = await fetch(`${API}/api/ohlcv?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&count=500`)
+        const res = await apiFetch(`/api/ohlcv?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&count=500`)
         data = await res.json()
       } catch {
         data = { success: false }
@@ -467,7 +467,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
 
   async function saveOrderEdit() {
     setOrderBusy(true)
-    await fetch(`${API}${tradingPrefix}/order`, {
+    await apiFetch(`${tradingPrefix}/order`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol: matchedOrder.symbol, stoplosspoint: orderEdit.stoplosspoint, targetpoint: orderEdit.targetpoint }),
     })
@@ -477,7 +477,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
 
   async function exitMatchedOrder() {
     setOrderBusy(true)
-    await fetch(`${API}${tradingPrefix}/exit-order`, {
+    await apiFetch(`${tradingPrefix}/exit-order`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol: matchedOrder.symbol }),
     })
@@ -500,7 +500,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       const body = isOption
         ? { underlying: chartContract.underlying, strike: chartContract.strike, right: chartContract.right === 'C' ? 'CE' : 'PE' }
         : { underlying: rawSymbol, direction }
-      const res = await fetch(`${API}${endpoint}`, {
+      const res = await apiFetch(`${endpoint}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
       const d = await res.json()
@@ -520,7 +520,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     if (!confirm(`Exit the open ${underlying} position now via the broker? This may use real money depending on the bot's "With money" setting.`)) return
     setTradeBusy(true)
     try {
-      const res = await fetch(`${API}/api/trading/ai-exit-order`, {
+      const res = await apiFetch(`/api/trading/ai-exit-order`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ underlying }),
       })
       const d = await res.json()
@@ -546,7 +546,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     setChain(null)
     setChainLoading(true)
     try {
-      const res = await fetch(`${API}/api/option-chain?underlying=${encodeURIComponent(underlying)}&exchange=${encodeURIComponent(exchange)}`)
+      const res = await apiFetch(`/api/option-chain?underlying=${encodeURIComponent(underlying)}&exchange=${encodeURIComponent(exchange)}`)
       const data = await res.json()
       setChain(data.success ? data : { error: true })
     } catch {

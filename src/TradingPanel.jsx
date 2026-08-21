@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { parseContract } from './contracts'
+import { apiFetch } from './api'
 
-const API = 'https://ongoing-boards-click-using.trycloudflare.com'
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 8px', width: 90 }
 const th = { textAlign: 'left', padding: '6px 10px', color: '#787b86', fontWeight: 500, fontSize: 12, borderBottom: '1px solid #2a2e39' }
@@ -30,7 +30,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     try {
       const client = data?.selectclient?.[0]
       const params = new URLSearchParams({ date, ...(client ? { selectclient: client } : {}) })
-      const res = await fetch(`${API}${prefix}/dashboard?${params}`)
+      const res = await apiFetch(`${prefix}/dashboard?${params}`)
       const d = await res.json()
       if (d.status !== 'success') throw new Error(d.message || 'failed to load')
       setData(d)
@@ -55,7 +55,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       trade_banknifty: config.BANKNIFTY,
       trade_SENSEX: config.SENSEX,
     }
-    const res = await fetch(`${API}${prefix}/config`, {
+    const res = await apiFetch(`${prefix}/config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })
     const d = await res.json()
@@ -73,7 +73,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       stoplosspoint: edit.stoplosspoint,
       targetpoint: edit.targetpoint,
     }
-    const res = await fetch(`${API}${prefix}/order`, {
+    const res = await apiFetch(`${prefix}/order`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })
     const d = await res.json()
@@ -84,7 +84,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
   async function exitOrder(symbol) {
     setSavingOrder(symbol)
-    const res = await fetch(`${API}${prefix}/exit-order`, {
+    const res = await apiFetch(`${prefix}/exit-order`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol, selectclient: data.selectclient?.[0] }),
     })
@@ -97,7 +97,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   async function deleteOrder(symbol) {
     if (!confirm(`Remove ${symbol} from the tracked order list? This only affects local tracking data, not any live broker position.`)) return
     setSavingOrder(symbol)
-    const res = await fetch(`${API}${prefix}/delete-order`, {
+    const res = await apiFetch(`${prefix}/delete-order`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol, selectclient: data.selectclient?.[0] }),
     })
@@ -119,7 +119,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     if (!c) { setError(`Could not parse contract from ${symbol}`); return }
     setChartLoading(symbol)
     const right = c.right === 'C' ? 'CE' : 'PE'
-    const res = await fetch(`${API}/api/search?query=${encodeURIComponent(`${c.underlying} ${c.strike} ${right}`)}&type=options`)
+    const res = await apiFetch(`/api/search?query=${encodeURIComponent(`${c.underlying} ${c.strike} ${right}`)}&type=options`)
     const d = await res.json()
     setChartLoading(null)
     const match = d.success && d.results.find((r) => parseContract(r.symbol)?.right === c.right)

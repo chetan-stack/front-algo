@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Chart from './Chart'
 import TradingPanel from './TradingPanel'
+import Login from './Login'
 
 const LAYOUTS = {
   1: { cols: 1, rows: 1 },
@@ -16,6 +17,7 @@ const TABS = [
 ]
 
 export default function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [count, setCount] = useState(1)
   const [view, setView] = useState('charts')
   const [jump, setJump] = useState(null)
@@ -26,6 +28,15 @@ export default function App() {
   function viewOnChart(req) {
     setJump(req)
     setView('charts')
+  }
+
+  if (!token) {
+    return <Login onLogin={(t) => { localStorage.setItem('token', t); setToken(t) }} />
+  }
+
+  function logout() {
+    localStorage.removeItem('token')
+    setToken(null)
   }
 
   return (
@@ -57,6 +68,15 @@ export default function App() {
             {n} screen{n === '1' ? '' : 's'}
           </button>
         ))}
+        <button
+          onClick={logout}
+          style={{
+            marginLeft: 'auto', background: 'transparent', color: '#787b86',
+            border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
+          }}
+        >
+          Log out
+        </button>
       </div>
       {isTrading ? (
         <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
