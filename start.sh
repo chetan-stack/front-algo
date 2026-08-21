@@ -3,6 +3,12 @@
 cd "$(dirname "$0")"
 mkdir -p logs
 
+# kill any previous run so the backend port is free before we bind it again
+if [ -f .runpids ]; then
+  kill $(cat .runpids) 2>/dev/null
+  sleep 1
+fi
+
 nohup npm run dev >logs/frontend.log 2>&1 &
 FRONTEND_PID=$!
 
@@ -28,8 +34,8 @@ for i in $(seq 1 30); do
 done
 
 if [ -n "$BACKEND_URL" ]; then
-  sed -i '' "s|^const API = '.*'|const API = '$BACKEND_URL'|" src/Chart.jsx src/TradingPanel.jsx
-  echo "patched Chart.jsx + TradingPanel.jsx API -> $BACKEND_URL"
+  sed -i '' "s|^const API = '.*'|const API = '$BACKEND_URL'|" src/Chart.jsx src/TradingPanel.jsx src/AiChat.jsx
+  echo "patched Chart.jsx + TradingPanel.jsx + AiChat.jsx API -> $BACKEND_URL"
 else
   echo "WARNING: backend tunnel URL didn't show up in time, Chart.jsx/TradingPanel.jsx not patched"
 fi

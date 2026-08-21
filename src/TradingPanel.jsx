@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { parseContract } from './contracts'
 
-const API = 'https://entertainment-marks-bradford-recruiting.trycloudflare.com'
+const API = 'https://ongoing-boards-click-using.trycloudflare.com'
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 8px', width: 90 }
 const th = { textAlign: 'left', padding: '6px 10px', color: '#787b86', fontWeight: 500, fontSize: 12, borderBottom: '1px solid #2a2e39' }

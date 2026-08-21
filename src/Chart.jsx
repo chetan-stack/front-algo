@@ -6,7 +6,7 @@ import AiChat from './AiChat'
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d']
 const RESOLUTION = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' }
 const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }
-const API = 'https://entertainment-marks-bradford-recruiting.trycloudflare.com'
+const API = 'https://ongoing-boards-click-using.trycloudflare.com'
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const EMA_COLORS = ['#2962ff', '#ff6d00', '#00c853', '#e91e63', '#9c27b0', '#00bcd4']
 // Same underlyings the ai_order_service.py backend supports (its `fochange` map) —
