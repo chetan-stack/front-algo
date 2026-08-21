@@ -23,7 +23,8 @@ def init_db():
                 username TEXT UNIQUE NOT NULL,
                 salt TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
-                selectclient TEXT
+                webview_port INTEGER NOT NULL,
+                ai_port INTEGER NOT NULL
             )
         """)
         conn.execute("""
@@ -38,12 +39,12 @@ def _hash(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
 
 
-def create_user(username: str, password: str, selectclient: str = None):
+def create_user(username: str, password: str, webview_port: int, ai_port: int):
     salt = secrets.token_hex(16)
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (username, salt, password_hash, selectclient) VALUES (?, ?, ?, ?)",
-            (username, salt, _hash(password, salt), selectclient),
+            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port) VALUES (?, ?, ?, ?, ?)",
+            (username, salt, _hash(password, salt), webview_port, ai_port),
         )
 
 

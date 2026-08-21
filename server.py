@@ -33,7 +33,7 @@ def login(payload: dict = Body(...)):
     if user is None:
         raise HTTPException(401, "invalid username or password")
     token = auth.create_session(user["id"])
-    return {"success": True, "token": token, "username": user["username"], "selectclient": user["selectclient"]}
+    return {"success": True, "token": token, "username": user["username"]}
 
 
 @app.post("/api/auth/logout")
@@ -45,7 +45,7 @@ def logout(authorization: str = Header(default=None)):
 
 @app.get("/api/auth/me")
 def me(user=Depends(auth.get_current_user)):
-    return {"success": True, "username": user["username"], "selectclient": user["selectclient"]}
+    return {"success": True, "username": user["username"]}
 
 # get_hist() opens a websocket on whatever instance calls it. A single shared
 # instance across concurrent requests races on the same connection and
@@ -217,70 +217,75 @@ def option_chain(underlying: str = "NIFTY", exchange: str = "NSE", strikes: int 
 # Proxy for the live trading bot's dashboard API (localhost:4100, a separate
 # Flask app in ~/PycharmProjects/pythonProject/SmartApi). It has no CORS
 # headers, so the browser can't call it directly from this app's origin —
-# route through here instead of touching that project's file.
-TRADING_API = "http://localhost:4100"
+# route through here instead of touching that project's file. Each logged-in
+# user has their own webviewdataapi.py process (own broker session, own
+# auto_trade.json/database.db) on their own port — see auth.py's users table
+# and SmartApi/new_account.sh — so the base URL is derived per-request from
+# whoever's actually logged in, not a single fixed host.
+def trading_api(user):
+    return f"http://localhost:{user['webview_port']}"
 
 
 @app.get("/api/trading/dashboard")
 def trading_dashboard(date: str = None, selectclient: str = None, user=Depends(auth.get_current_user)):
     params = {k: v for k, v in {"date": date, "selectclient": selectclient}.items() if v}
-    resp = requests.get(f"{TRADING_API}/api/dashboard", params=params, timeout=20)
+    resp = requests.get(f"{trading_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/config")
 def trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{TRADING_API}/api/dashboard/config", json=payload, timeout=20)
+    resp = requests.post(f"{trading_api(user)}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/order")
 def trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{TRADING_API}/api/update_order", json=payload, timeout=20)
+    resp = requests.post(f"{trading_api(user)}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/delete-order")
 def trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{TRADING_API}/api/delete_order", json=payload, timeout=20)
+    resp = requests.post(f"{trading_api(user)}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/exit-order")
 def trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{TRADING_API}/api/exit_order", json=payload, timeout=20)
+    resp = requests.post(f"{trading_api(user)}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/trading/pending-orders")
 def trading_pending_orders(selectclient: str = None, user=Depends(auth.get_current_user)):
     params = {"selectclient": selectclient} if selectclient else {}
-    resp = requests.get(f"{TRADING_API}/api/pending_orders", params=params, timeout=20)
+    resp = requests.get(f"{trading_api(user)}/api/pending_orders", params=params, timeout=20)
     return resp.json()
 
 
 # Proxy for ai_order_service.py (a brand-new, standalone script in the SmartApi
 # project — see that file's docstring). Runs as its own process with its own
-# broker session, so placing an AI-triggered order never requires touching or
-# restarting storesupportzone.py / store_exit.py, the already-running bots.
-AI_ORDER_API = "http://localhost:4104"
+# broker session per user, same per-user-port pattern as trading_api() above.
+def ai_order_api(user):
+    return f"http://localhost:{user['ai_port']}"
 
 
 @app.post("/api/trading/ai-enter-order")
 def trading_ai_enter_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{AI_ORDER_API}/api/ai/enter-order", json=payload, timeout=30)
+    resp = requests.post(f"{ai_order_api(user)}/api/ai/enter-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-exit-order")
 def trading_ai_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{AI_ORDER_API}/api/ai/exit-order", json=payload, timeout=30)
+    resp = requests.post(f"{ai_order_api(user)}/api/ai/exit-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-enter-option-order")
 def trading_ai_enter_option_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{AI_ORDER_API}/api/ai/enter-option-order", json=payload, timeout=30)
+    resp = requests.post(f"{ai_order_api(user)}/api/ai/enter-option-order", json=payload, timeout=30)
     return resp.json()
 
 
@@ -464,14 +469,14 @@ def ai_analyze(payload: dict = Body(...), user=Depends(auth.get_current_user)):
 
 
 # Proxies to sendAlert() in webviewdataapi.py (the same trading-bot Flask app
-# TRADING_API already points at) — reuses its bot token/chatids instead of
+# trading_api() already points at) — reuses its bot token/chatids instead of
 # duplicating them here.
 @app.post("/api/telegram/alert")
 def telegram_alert(payload: dict = Body(...), user=Depends(auth.get_current_user)):
     text = payload.get("text")
     if not text:
         raise HTTPException(400, "text required")
-    resp = requests.post(f"{TRADING_API}/api/send_alert", json={"message": text}, timeout=20)
+    resp = requests.post(f"{trading_api(user)}/api/send_alert", json={"message": text}, timeout=20)
     return resp.json()
 
 
