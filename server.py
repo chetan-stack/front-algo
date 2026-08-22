@@ -109,6 +109,19 @@ def _crypto_document_py_content(deltaex):
     )
 
 
+# stetergy.py reads several of these keys with bare fetch['key'] (no .get()
+# fallback) and crashes the whole always-on process on the first scheduled
+# tick if they're missing (confirmed — a fresh account seeded with just
+# {"withmoney": False} crashed on fetch['stop_loss'] within 30s of starting).
+# auto_place_order defaults off so a new account never auto-trades before
+# someone reviews its settings.
+CRYPTO_DEFAULT_CONFIG = {
+    "withmoney": False, "auto_place_order": False, "stop_loss": "0", "lotsize": "1",
+    "target_points": "0", "loss_points": "0", "trade_range_min": None, "trade_range_max": None,
+    "buy_or_sell": None,
+}
+
+
 def _start_bot_process(script_name, script_dir, account_dir, port=None):
     log_dir = SMARTAPI_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -134,10 +147,14 @@ def _pid_alive(account_dir, script_name):
     if not pid_file.exists():
         return False
     try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-        return True
-    except (ProcessLookupError, ValueError):
+        pid = int(pid_file.read_text().strip())
+    except ValueError:
         return False
+    # os.kill(pid, 0) succeeds for a zombie too (confirmed — a crashed
+    # stetergy.py stayed "alive" by that check until reaped), so check the
+    # actual process state instead.
+    state = subprocess.run(["ps", "-o", "state=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def _kill_port(port):
@@ -236,7 +253,7 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
         crypto_account_dir = CRYPTO_DIR / "accounts" / username
         crypto_account_dir.mkdir(parents=True)
         (crypto_account_dir / "document.py").write_text(_crypto_document_py_content(deltaex))
-        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps({"withmoney": False}, indent=4))
+        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps(CRYPTO_DEFAULT_CONFIG, indent=4))
 
     auth.create_user(username, password, webview_port, ai_port, crypto_port=crypto_port)
 
@@ -337,7 +354,7 @@ def admin_update_crypto_credentials(username: str, payload: dict = Body(...), ad
     if is_new:
         crypto_port = _next_crypto_port(user_row["webview_port"] + 1)
         crypto_account_dir.mkdir(parents=True, exist_ok=True)
-        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps({"withmoney": False}, indent=4))
+        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps(CRYPTO_DEFAULT_CONFIG, indent=4))
         auth.set_crypto_port(username, crypto_port)
     else:
         crypto_port = user_row["crypto_port"]
