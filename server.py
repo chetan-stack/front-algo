@@ -102,6 +102,35 @@ def _start_bot_process(script_name, account_dir, port):
     return proc
 
 
+def _kill_port(port):
+    result = subprocess.run(["lsof", "-tiTCP:" + str(port), "-sTCP:LISTEN"], capture_output=True, text=True)
+    for pid in result.stdout.split():
+        try:
+            os.kill(int(pid), 15)  # SIGTERM
+        except ProcessLookupError:
+            pass
+    if result.stdout.strip():
+        time.sleep(1)
+
+
+# document.py is a plain data module written by _document_py_content() below —
+# exec'ing it back is the simplest way to read whatever it currently holds,
+# no bespoke parser needed.
+def _read_document_py(account_dir):
+    path = account_dir / "document.py"
+    if not path.exists():
+        return None
+    ns = {}
+    exec(path.read_text(), ns)
+    return {
+        "demo_mode": bool(ns.get("demo_mode", False)),
+        "api_key": ns.get("api_key", ""),
+        "user_id": ns.get("user_id", ""),
+        "password": ns.get("password", ""),
+        "totp": ns.get("totp", ""),
+    }
+
+
 @app.get("/api/admin/users")
 def admin_list_users(admin=Depends(auth.require_admin)):
     return {"success": True, "users": [
@@ -149,6 +178,57 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
         "success": True, "username": username, "webview_port": webview_port, "ai_port": ai_port,
         "webview_alive": webview_alive, "ai_alive": ai_alive,
     }
+
+
+# AngelOne credentials are stored in plaintext in document.py by necessity —
+# the broker login needs the real password — so unlike the app login (hashed,
+# unrecoverable), an admin who already has filesystem access to that file can
+# just as well view/edit it here. Used both to fill in a demo account's real
+# credentials later and to rotate an existing account's password/TOTP secret.
+@app.get("/api/admin/users/{username}/credentials")
+def admin_get_credentials(username: str, admin=Depends(auth.require_admin)):
+    creds = _read_document_py(SMARTAPI_DIR / "accounts" / username)
+    if creds is None:
+        raise HTTPException(404, f"no account directory for {username!r}")
+    return {"success": True, **creds}
+
+
+@app.put("/api/admin/users/{username}/credentials")
+def admin_update_credentials(username: str, payload: dict = Body(...), admin=Depends(auth.require_admin)):
+    account_dir = SMARTAPI_DIR / "accounts" / username
+    if not account_dir.exists():
+        raise HTTPException(404, f"no account directory for {username!r}")
+    user_row = next((u for u in auth.list_users() if u["username"] == username), None)
+    if user_row is None:
+        raise HTTPException(404, f"no such user {username!r}")
+
+    angelone = payload.get("angelone")
+    (account_dir / "document.py").write_text(_document_py_content(angelone))
+
+    # document.py is only read at process startup, so the bots need restarting
+    # for new/changed credentials (or a demo <-> live switch) to take effect.
+    _kill_port(user_row["webview_port"])
+    _kill_port(user_row["ai_port"])
+    webview_proc = _start_bot_process("webviewdataapi.py", account_dir, user_row["webview_port"])
+    time.sleep(1.5 if not angelone else 8)
+    webview_alive = webview_proc.poll() is None
+
+    ai_proc = _start_bot_process("ai_order_service.py", account_dir, user_row["ai_port"])
+    time.sleep(1.5 if not angelone else 3)
+    ai_alive = ai_proc.poll() is None
+
+    return {"success": True, "webview_alive": webview_alive, "ai_alive": ai_alive}
+
+
+@app.post("/api/admin/users/{username}/reset-password")
+def admin_reset_password(username: str, payload: dict = Body(...), admin=Depends(auth.require_admin)):
+    new_password = payload.get("password")
+    if not new_password:
+        raise HTTPException(400, "password required")
+    auth.set_password(username, new_password)
+    auth.delete_sessions_for_user(username)  # force re-login with the new password
+    return {"success": True}
+
 
 # get_hist() opens a websocket on whatever instance calls it. A single shared
 # instance across concurrent requests races on the same connection and

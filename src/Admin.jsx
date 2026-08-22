@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { apiFetch } from './api'
 
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 16 }
@@ -16,6 +16,12 @@ export default function Admin() {
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
 
+  const [managingUser, setManagingUser] = useState(null)
+  const [managingCreds, setManagingCreds] = useState(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [manageBusy, setManageBusy] = useState(false)
+  const [manageMessage, setManageMessage] = useState('')
+
   async function loadUsers() {
     const res = await apiFetch('/api/admin/users')
     const data = await res.json()
@@ -23,6 +29,56 @@ export default function Admin() {
   }
 
   useEffect(() => { loadUsers() }, [])
+
+  async function openManage(u) {
+    if (managingUser === u.username) {
+      setManagingUser(null)
+      return
+    }
+    setManagingUser(u.username)
+    setManageMessage('')
+    setNewPassword('')
+    const res = await apiFetch(`/api/admin/users/${u.username}/credentials`)
+    const data = await res.json()
+    setManagingCreds(data.success ? data : { demo_mode: true, api_key: '', user_id: '', password: '', totp: '' })
+  }
+
+  async function saveCredentials() {
+    setManageBusy(true)
+    setManageMessage('')
+    try {
+      const res = await apiFetch(`/api/admin/users/${managingUser}/credentials`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ angelone: managingCreds.demo_mode ? null : managingCreds }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'failed to save')
+      setManageMessage(`Saved. Dashboard bot: ${data.webview_alive ? '🟢' : '🔴'}, AI bot: ${data.ai_alive ? '🟢' : '🔴'}.`)
+      loadUsers()
+    } catch (err) {
+      setManageMessage(`Error: ${err.message}`)
+    }
+    setManageBusy(false)
+  }
+
+  async function resetPassword() {
+    if (!newPassword) return
+    setManageBusy(true)
+    setManageMessage('')
+    try {
+      const res = await apiFetch(`/api/admin/users/${managingUser}/reset-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'failed to reset password')
+      setManageMessage('Password reset — that user is logged out everywhere and must sign in again with the new password.')
+      setNewPassword('')
+    } catch (err) {
+      setManageMessage(`Error: ${err.message}`)
+    }
+    setManageBusy(false)
+  }
 
   async function createUser(e) {
     e.preventDefault()
@@ -115,18 +171,84 @@ export default function Admin() {
               <th style={{ padding: '4px 8px' }}>Ports</th>
               <th style={{ padding: '4px 8px' }}>Status</th>
               <th style={{ padding: '4px 8px' }}>Admin</th>
+              <th style={{ padding: '4px 8px' }}></th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.username} style={{ borderTop: '1px solid #2a2e39' }}>
-                <td style={{ padding: '6px 8px', color: '#d1d4dc' }}>{u.username}</td>
-                <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.webview_port} / {u.ai_port}</td>
-                <td style={{ padding: '6px 8px' }}>
-                  {u.webview_alive ? '🟢' : '🔴'} dashboard&nbsp;&nbsp;{u.ai_alive ? '🟢' : '🔴'} AI
-                </td>
-                <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.is_admin ? 'yes' : ''}</td>
-              </tr>
+              <Fragment key={u.username}>
+                <tr style={{ borderTop: '1px solid #2a2e39' }}>
+                  <td style={{ padding: '6px 8px', color: '#d1d4dc' }}>{u.username}</td>
+                  <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.webview_port} / {u.ai_port}</td>
+                  <td style={{ padding: '6px 8px' }}>
+                    {u.webview_alive ? '🟢' : '🔴'} dashboard&nbsp;&nbsp;{u.ai_alive ? '🟢' : '🔴'} AI
+                  </td>
+                  <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.is_admin ? 'yes' : ''}</td>
+                  <td style={{ padding: '6px 8px' }}>
+                    <button
+                      onClick={() => openManage(u)}
+                      style={{ background: 'transparent', color: '#2962ff', border: '1px solid #2a2e39', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}
+                    >
+                      {managingUser === u.username ? 'Close' : 'Manage'}
+                    </button>
+                  </td>
+                </tr>
+                {managingUser === u.username && managingCreds && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: '10px 8px', background: '#131722' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <input
+                          type="checkbox" id={`demo-${u.username}`} checked={managingCreds.demo_mode}
+                          onChange={(e) => setManagingCreds({ ...managingCreds, demo_mode: e.target.checked })}
+                        />
+                        <label htmlFor={`demo-${u.username}`} style={{ color: '#d1d4dc' }}>Demo mode</label>
+                      </div>
+                      {!managingCreds.demo_mode && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                          <div>
+                            <label style={label}>AngelOne API key</label>
+                            <input style={input} value={managingCreds.api_key} onChange={(e) => setManagingCreds({ ...managingCreds, api_key: e.target.value })} />
+                          </div>
+                          <div>
+                            <label style={label}>AngelOne client (user) ID</label>
+                            <input style={input} value={managingCreds.user_id} onChange={(e) => setManagingCreds({ ...managingCreds, user_id: e.target.value })} />
+                          </div>
+                          <div>
+                            <label style={label}>AngelOne password</label>
+                            <input style={input} type="password" value={managingCreds.password} onChange={(e) => setManagingCreds({ ...managingCreds, password: e.target.value })} />
+                          </div>
+                          <div>
+                            <label style={label}>AngelOne TOTP secret</label>
+                            <input style={input} value={managingCreds.totp} onChange={(e) => setManagingCreds({ ...managingCreds, totp: e.target.value })} />
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        disabled={manageBusy} onClick={saveCredentials}
+                        style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12, marginRight: 8 }}
+                      >
+                        {manageBusy ? 'Saving…' : 'Save & restart bots'}
+                      </button>
+
+                      <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          style={{ ...input, width: 200 }} type="password" placeholder="New app password"
+                          value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                        />
+                        <button
+                          disabled={manageBusy || !newPassword} onClick={resetPassword}
+                          style={{ background: 'transparent', color: '#ef5350', border: '1px solid #2a2e39', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12 }}
+                        >
+                          Reset password
+                        </button>
+                        <span style={{ color: '#787b86', fontSize: 12 }}>(app login password can't be viewed, only reset)</span>
+                      </div>
+
+                      {manageMessage && <div style={{ marginTop: 10, fontSize: 12, color: '#d1d4dc' }}>{manageMessage}</div>}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

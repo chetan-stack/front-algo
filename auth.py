@@ -54,6 +54,23 @@ def list_users():
         return conn.execute("SELECT id, username, webview_port, ai_port, is_admin FROM users ORDER BY id").fetchall()
 
 
+def set_password(username: str, new_password: str):
+    salt = secrets.token_hex(16)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET salt = ?, password_hash = ? WHERE username = ?",
+            (salt, _hash(new_password, salt), username),
+        )
+
+
+def delete_sessions_for_user(username: str):
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+            (username,),
+        )
+
+
 def authenticate(username: str, password: str):
     with _connect() as conn:
         user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
