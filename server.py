@@ -58,6 +58,7 @@ def me(user=Depends(auth.get_current_user)):
 # see SmartApi/new_account.sh, which this mirrors as an HTTP-driven version.
 SMARTAPI_DIR = Path(os.environ.get("SMARTAPI_DIR", str(Path.home() / "PycharmProjects/pythonProject/SmartApi")))
 SMARTAPI_VENV_PYTHON = SMARTAPI_DIR.parent / "venv" / "bin" / "python"
+CRYPTO_DIR = SMARTAPI_DIR / "crypto"
 
 
 def _port_free(port):
@@ -70,7 +71,14 @@ def _next_ports():
     base = max([u["webview_port"] for u in existing], default=4090) + 10
     while not (_port_free(base) and _port_free(base + 4)):
         base += 10
-    return base, base + 4
+    return base, base + 4  # webview_port, ai_port
+
+
+def _next_crypto_port(preferred):
+    port = preferred
+    while not _port_free(port):
+        port += 10
+    return port
 
 
 def _document_py_content(angelone):
@@ -89,17 +97,47 @@ def _document_py_content(angelone):
     )
 
 
-def _start_bot_process(script_name, account_dir, port):
+def _crypto_document_py_content(deltaex):
+    if not deltaex:
+        return (
+            "# Demo account — no DeltaEx credentials needed.\n"
+            "demo_mode = True\n"
+        )
+    return (
+        f"api_key = {json.dumps(deltaex.get('api_key', ''))}\n"
+        f"api_secret = {json.dumps(deltaex.get('api_secret', ''))}\n"
+    )
+
+
+def _start_bot_process(script_name, script_dir, account_dir, port=None):
     log_dir = SMARTAPI_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(log_dir / f"{account_dir.name}_{script_name.removesuffix('.py')}.log", "w")
+    env = {**os.environ}
+    if port is not None:
+        env["PORT"] = str(port)
     proc = subprocess.Popen(
-        [str(SMARTAPI_VENV_PYTHON), str(SMARTAPI_DIR / script_name)],
-        cwd=str(account_dir), env={**os.environ, "PORT": str(port)},
+        [str(SMARTAPI_VENV_PYTHON), str(script_dir / script_name)],
+        cwd=str(account_dir), env=env,
         stdout=log_file, stderr=subprocess.STDOUT,
     )
     log_file.close()  # Popen already duped the fd for the child; safe to close our handle
+    if port is None:
+        # No listening port to probe for liveness later (stetergy.py is a
+        # headless loop, not a Flask server) — remember the PID instead.
+        (account_dir / f"{script_name.removesuffix('.py')}.pid").write_text(str(proc.pid))
     return proc
+
+
+def _pid_alive(account_dir, script_name):
+    pid_file = account_dir / f"{script_name.removesuffix('.py')}.pid"
+    if not pid_file.exists():
+        return False
+    try:
+        os.kill(int(pid_file.read_text().strip()), 0)
+        return True
+    except (ProcessLookupError, ValueError):
+        return False
 
 
 def _kill_port(port):
@@ -111,6 +149,17 @@ def _kill_port(port):
             pass
     if result.stdout.strip():
         time.sleep(1)
+
+
+def _kill_pid(account_dir, script_name):
+    pid_file = account_dir / f"{script_name.removesuffix('.py')}.pid"
+    if not pid_file.exists():
+        return
+    try:
+        os.kill(int(pid_file.read_text().strip()), 15)  # SIGTERM
+        time.sleep(1)
+    except (ProcessLookupError, ValueError):
+        pass
 
 
 # document.py is a plain data module written by _document_py_content() below —
@@ -131,17 +180,34 @@ def _read_document_py(account_dir):
     }
 
 
+def _read_crypto_document_py(account_dir):
+    path = account_dir / "document.py"
+    if not path.exists():
+        return None
+    ns = {}
+    exec(path.read_text(), ns)
+    return {
+        "demo_mode": bool(ns.get("demo_mode", False)),
+        "api_key": ns.get("api_key", ""),
+        "api_secret": ns.get("api_secret", ""),
+    }
+
+
 @app.get("/api/admin/users")
 def admin_list_users(admin=Depends(auth.require_admin)):
-    return {"success": True, "users": [
-        {
+    users = []
+    for u in auth.list_users():
+        entry = {
             "username": u["username"], "webview_port": u["webview_port"], "ai_port": u["ai_port"],
-            "is_admin": bool(u["is_admin"]),
+            "crypto_port": u["crypto_port"], "is_admin": bool(u["is_admin"]),
             "webview_alive": not _port_free(u["webview_port"]),
             "ai_alive": not _port_free(u["ai_port"]),
         }
-        for u in auth.list_users()
-    ]}
+        if u["crypto_port"] is not None:
+            entry["crypto_dashboard_alive"] = not _port_free(u["crypto_port"])
+            entry["crypto_strategy_alive"] = _pid_alive(CRYPTO_DIR / "accounts" / u["username"], "stetergy.py")
+        users.append(entry)
+    return {"success": True, "users": users}
 
 
 @app.post("/api/admin/users")
@@ -161,23 +227,48 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
     (account_dir / "document.py").write_text(_document_py_content(angelone))
     (account_dir / "auto_trade.json").write_text(json.dumps({"withmoney": False, "lotsize": 1}, indent=4))
 
-    auth.create_user(username, password, webview_port, ai_port)
+    include_crypto = bool(payload.get("include_crypto"))
+    crypto_port = None
+    crypto_account_dir = None
+    if include_crypto:
+        deltaex = payload.get("deltaex")  # {api_key, api_secret} or falsy for demo mode
+        crypto_port = _next_crypto_port(webview_port + 1)
+        crypto_account_dir = CRYPTO_DIR / "accounts" / username
+        crypto_account_dir.mkdir(parents=True)
+        (crypto_account_dir / "document.py").write_text(_crypto_document_py_content(deltaex))
+        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps({"withmoney": False}, indent=4))
+
+    auth.create_user(username, password, webview_port, ai_port, crypto_port=crypto_port)
 
     # Real broker logins get rate-limited by AngelOne if fired too close together
     # (confirmed — "Access denied because of exceeding access rate") — stagger
     # them. Demo accounts skip the broker login entirely, so no need to wait.
-    webview_proc = _start_bot_process("webviewdataapi.py", account_dir, webview_port)
+    # DeltaEx (crypto) has no such login step, so no staggering needed there.
+    webview_proc = _start_bot_process("webviewdataapi.py", SMARTAPI_DIR, account_dir, webview_port)
     time.sleep(1.5 if not angelone else 8)
     webview_alive = webview_proc.poll() is None
 
-    ai_proc = _start_bot_process("ai_order_service.py", account_dir, ai_port)
+    ai_proc = _start_bot_process("ai_order_service.py", SMARTAPI_DIR, account_dir, ai_port)
     time.sleep(1.5 if not angelone else 3)
     ai_alive = ai_proc.poll() is None
 
-    return {
+    result = {
         "success": True, "username": username, "webview_port": webview_port, "ai_port": ai_port,
         "webview_alive": webview_alive, "ai_alive": ai_alive,
     }
+
+    if include_crypto:
+        crypto_dashboard_proc = _start_bot_process("webviewdataapi.py", CRYPTO_DIR, crypto_account_dir, crypto_port)
+        time.sleep(1.5)
+        crypto_strategy_proc = _start_bot_process("stetergy.py", CRYPTO_DIR, crypto_account_dir)
+        time.sleep(1.5)
+        result.update({
+            "crypto_port": crypto_port,
+            "crypto_dashboard_alive": crypto_dashboard_proc.poll() is None,
+            "crypto_strategy_alive": crypto_strategy_proc.poll() is None,
+        })
+
+    return result
 
 
 # AngelOne credentials are stored in plaintext in document.py by necessity —
@@ -209,15 +300,62 @@ def admin_update_credentials(username: str, payload: dict = Body(...), admin=Dep
     # for new/changed credentials (or a demo <-> live switch) to take effect.
     _kill_port(user_row["webview_port"])
     _kill_port(user_row["ai_port"])
-    webview_proc = _start_bot_process("webviewdataapi.py", account_dir, user_row["webview_port"])
+    webview_proc = _start_bot_process("webviewdataapi.py", SMARTAPI_DIR, account_dir, user_row["webview_port"])
     time.sleep(1.5 if not angelone else 8)
     webview_alive = webview_proc.poll() is None
 
-    ai_proc = _start_bot_process("ai_order_service.py", account_dir, user_row["ai_port"])
+    ai_proc = _start_bot_process("ai_order_service.py", SMARTAPI_DIR, account_dir, user_row["ai_port"])
     time.sleep(1.5 if not angelone else 3)
     ai_alive = ai_proc.poll() is None
 
     return {"success": True, "webview_alive": webview_alive, "ai_alive": ai_alive}
+
+
+# DeltaEx (crypto) credentials work the same way as AngelOne's above — plaintext
+# by necessity, viewable/editable by an admin who already has filesystem access.
+# Unlike the india side, a user might not have a crypto account at all yet
+# (crypto_port is NULL) — GET reports that instead of 404ing, so the frontend
+# can render an empty "not set up" form rather than an error.
+@app.get("/api/admin/users/{username}/crypto-credentials")
+def admin_get_crypto_credentials(username: str, admin=Depends(auth.require_admin)):
+    creds = _read_crypto_document_py(CRYPTO_DIR / "accounts" / username)
+    if creds is None:
+        return {"success": True, "provisioned": False, "demo_mode": True, "api_key": "", "api_secret": ""}
+    return {"success": True, "provisioned": True, **creds}
+
+
+@app.put("/api/admin/users/{username}/crypto-credentials")
+def admin_update_crypto_credentials(username: str, payload: dict = Body(...), admin=Depends(auth.require_admin)):
+    user_row = next((u for u in auth.list_users() if u["username"] == username), None)
+    if user_row is None:
+        raise HTTPException(404, f"no such user {username!r}")
+
+    crypto_account_dir = CRYPTO_DIR / "accounts" / username
+    deltaex = payload.get("deltaex")
+    is_new = user_row["crypto_port"] is None
+
+    if is_new:
+        crypto_port = _next_crypto_port(user_row["webview_port"] + 1)
+        crypto_account_dir.mkdir(parents=True, exist_ok=True)
+        (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps({"withmoney": False}, indent=4))
+        auth.set_crypto_port(username, crypto_port)
+    else:
+        crypto_port = user_row["crypto_port"]
+        _kill_port(crypto_port)
+        _kill_pid(crypto_account_dir, "stetergy.py")
+
+    (crypto_account_dir / "document.py").write_text(_crypto_document_py_content(deltaex))
+
+    dashboard_proc = _start_bot_process("webviewdataapi.py", CRYPTO_DIR, crypto_account_dir, crypto_port)
+    time.sleep(1.5)
+    strategy_proc = _start_bot_process("stetergy.py", CRYPTO_DIR, crypto_account_dir)
+    time.sleep(1.5)
+
+    return {
+        "success": True, "crypto_port": crypto_port,
+        "crypto_dashboard_alive": dashboard_proc.poll() is None,
+        "crypto_strategy_alive": strategy_proc.poll() is None,
+    }
 
 
 @app.post("/api/admin/users/{username}/reset-password")
@@ -473,45 +611,50 @@ def trading_ai_enter_option_order(payload: dict = Body(...), user=Depends(auth.g
 
 
 # Same proxy pattern, for the crypto counterpart bot
-# (~/PycharmProjects/pythonProject/SmartApi/crypto/webviewdataapi.py, port
-# 4101) — separate JSON store and DB, no client selector, smaller config.
-CRYPTO_TRADING_API = "http://localhost:4101"
+# (~/PycharmProjects/pythonProject/SmartApi/crypto/webviewdataapi.py) — each
+# user has their own instance on their own crypto_port, same as trading_api()
+# above. crypto_port is NULL for a user with no crypto account provisioned yet
+# (e.g. created before crypto support existed, or india-only by choice).
+def crypto_api(user):
+    if user["crypto_port"] is None:
+        raise HTTPException(404, "no crypto account provisioned for this user")
+    return f"http://localhost:{user['crypto_port']}"
 
 
 @app.get("/api/crypto/trading/dashboard")
 def crypto_trading_dashboard(date: str = None, user=Depends(auth.get_current_user)):
     params = {"date": date} if date else {}
-    resp = requests.get(f"{CRYPTO_TRADING_API}/api/dashboard", params=params, timeout=20)
+    resp = requests.get(f"{crypto_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/config")
 def crypto_trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{CRYPTO_TRADING_API}/api/dashboard/config", json=payload, timeout=20)
+    resp = requests.post(f"{crypto_api(user)}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/order")
 def crypto_trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{CRYPTO_TRADING_API}/api/update_order", json=payload, timeout=20)
+    resp = requests.post(f"{crypto_api(user)}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/delete-order")
 def crypto_trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{CRYPTO_TRADING_API}/api/delete_order", json=payload, timeout=20)
+    resp = requests.post(f"{crypto_api(user)}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/exit-order")
 def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    resp = requests.post(f"{CRYPTO_TRADING_API}/api/exit_order", json=payload, timeout=20)
+    resp = requests.post(f"{crypto_api(user)}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/crypto/trading/pending-orders")
 def crypto_trading_pending_orders(user=Depends(auth.get_current_user)):
-    resp = requests.get(f"{CRYPTO_TRADING_API}/api/pending_orders", timeout=20)
+    resp = requests.get(f"{crypto_api(user)}/api/pending_orders", timeout=20)
     return resp.json()
 
 

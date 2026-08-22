@@ -25,7 +25,8 @@ def init_db():
                 password_hash TEXT NOT NULL,
                 webview_port INTEGER NOT NULL,
                 ai_port INTEGER NOT NULL,
-                is_admin INTEGER NOT NULL DEFAULT 0
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                crypto_port INTEGER
             )
         """)
         conn.execute("""
@@ -34,24 +35,34 @@ def init_db():
                 user_id INTEGER NOT NULL REFERENCES users(id)
             )
         """)
+        # crypto_port didn't exist on users created before crypto support was
+        # added — NULL for those rows means "no crypto account provisioned".
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "crypto_port" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN crypto_port INTEGER")
 
 
 def _hash(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
 
 
-def create_user(username: str, password: str, webview_port: int, ai_port: int, is_admin: bool = False):
+def create_user(username: str, password: str, webview_port: int, ai_port: int, is_admin: bool = False, crypto_port: int = None):
     salt = secrets.token_hex(16)
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
-            (username, salt, _hash(password, salt), webview_port, ai_port, int(is_admin)),
+            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port, is_admin, crypto_port) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (username, salt, _hash(password, salt), webview_port, ai_port, int(is_admin), crypto_port),
         )
+
+
+def set_crypto_port(username: str, crypto_port: int):
+    with _connect() as conn:
+        conn.execute("UPDATE users SET crypto_port = ? WHERE username = ?", (crypto_port, username))
 
 
 def list_users():
     with _connect() as conn:
-        return conn.execute("SELECT id, username, webview_port, ai_port, is_admin FROM users ORDER BY id").fetchall()
+        return conn.execute("SELECT id, username, webview_port, ai_port, crypto_port, is_admin FROM users ORDER BY id").fetchall()
 
 
 def set_password(username: str, new_password: str):
