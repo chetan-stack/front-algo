@@ -1,6 +1,6 @@
 // Single source of truth for the backend origin — start.sh patches this line's
 // URL on every run (cloudflare quick tunnels get a new random URL each time).
-export const API = 'https://collecting-lending-illustration-secretariat.trycloudflare.com'
+export const API = 'https://wireless-succeed-blogs-rack.trycloudflare.com'
 
 // Central fetch wrapper so every call carries the logged-in user's token
 // without each component managing auth headers itself. A 401 means the
