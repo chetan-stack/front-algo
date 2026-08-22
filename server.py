@@ -2,8 +2,12 @@ import asyncio
 import json
 import os
 import re
+import socket
+import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import certifi
 import requests
 from dotenv import load_dotenv
@@ -33,7 +37,7 @@ def login(payload: dict = Body(...)):
     if user is None:
         raise HTTPException(401, "invalid username or password")
     token = auth.create_session(user["id"])
-    return {"success": True, "token": token, "username": user["username"]}
+    return {"success": True, "token": token, "username": user["username"], "is_admin": bool(user["is_admin"])}
 
 
 @app.post("/api/auth/logout")
@@ -45,7 +49,106 @@ def logout(authorization: str = Header(default=None)):
 
 @app.get("/api/auth/me")
 def me(user=Depends(auth.get_current_user)):
-    return {"success": True, "username": user["username"]}
+    return {"success": True, "username": user["username"], "is_admin": bool(user["is_admin"])}
+
+
+# Admin screen: create a new user's app login + their SmartApi account
+# directory (accounts/<username>/document.py + auto_trade.json), then start
+# their two bot processes. Lives in the SmartApi repo, a sibling directory —
+# see SmartApi/new_account.sh, which this mirrors as an HTTP-driven version.
+SMARTAPI_DIR = Path(os.environ.get("SMARTAPI_DIR", str(Path.home() / "PycharmProjects/pythonProject/SmartApi")))
+SMARTAPI_VENV_PYTHON = SMARTAPI_DIR.parent / "venv" / "bin" / "python"
+
+
+def _port_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("localhost", port)) != 0
+
+
+def _next_ports():
+    existing = auth.list_users()
+    base = max([u["webview_port"] for u in existing], default=4090) + 10
+    while not (_port_free(base) and _port_free(base + 4)):
+        base += 10
+    return base, base + 4
+
+
+def _document_py_content(angelone):
+    if not angelone:
+        return (
+            "# Demo account — no broker login, no credentials needed.\n"
+            "demo_mode = True\n"
+            "chatids = []\n"
+        )
+    return (
+        f"api_key = {json.dumps(angelone.get('api_key', ''))}\n"
+        f"user_id = {json.dumps(angelone.get('user_id', ''))}\n"
+        f"password = {json.dumps(angelone.get('password', ''))}\n"
+        f"totp = {json.dumps(angelone.get('totp', ''))}\n"
+        "chatids = []\n"
+    )
+
+
+def _start_bot_process(script_name, account_dir, port):
+    log_dir = SMARTAPI_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"{account_dir.name}_{script_name.removesuffix('.py')}.log", "w")
+    proc = subprocess.Popen(
+        [str(SMARTAPI_VENV_PYTHON), str(SMARTAPI_DIR / script_name)],
+        cwd=str(account_dir), env={**os.environ, "PORT": str(port)},
+        stdout=log_file, stderr=subprocess.STDOUT,
+    )
+    log_file.close()  # Popen already duped the fd for the child; safe to close our handle
+    return proc
+
+
+@app.get("/api/admin/users")
+def admin_list_users(admin=Depends(auth.require_admin)):
+    return {"success": True, "users": [
+        {
+            "username": u["username"], "webview_port": u["webview_port"], "ai_port": u["ai_port"],
+            "is_admin": bool(u["is_admin"]),
+            "webview_alive": not _port_free(u["webview_port"]),
+            "ai_alive": not _port_free(u["ai_port"]),
+        }
+        for u in auth.list_users()
+    ]}
+
+
+@app.post("/api/admin/users")
+def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admin)):
+    username = payload.get("username")
+    password = payload.get("password")
+    if not username or not password:
+        raise HTTPException(400, "username and password required")
+
+    account_dir = SMARTAPI_DIR / "accounts" / username
+    if account_dir.exists():
+        raise HTTPException(409, f"account directory already exists for {username!r}")
+
+    angelone = payload.get("angelone")  # {api_key, user_id, password, totp} or falsy for demo mode
+    webview_port, ai_port = _next_ports()
+    account_dir.mkdir(parents=True)
+    (account_dir / "document.py").write_text(_document_py_content(angelone))
+    (account_dir / "auto_trade.json").write_text(json.dumps({"withmoney": False, "lotsize": 1}, indent=4))
+
+    auth.create_user(username, password, webview_port, ai_port)
+
+    # Real broker logins get rate-limited by AngelOne if fired too close together
+    # (confirmed — "Access denied because of exceeding access rate") — stagger
+    # them. Demo accounts skip the broker login entirely, so no need to wait.
+    webview_proc = _start_bot_process("webviewdataapi.py", account_dir, webview_port)
+    time.sleep(1.5 if not angelone else 8)
+    webview_alive = webview_proc.poll() is None
+
+    ai_proc = _start_bot_process("ai_order_service.py", account_dir, ai_port)
+    time.sleep(1.5 if not angelone else 3)
+    ai_alive = ai_proc.poll() is None
+
+    return {
+        "success": True, "username": username, "webview_port": webview_port, "ai_port": ai_port,
+        "webview_alive": webview_alive, "ai_alive": ai_alive,
+    }
 
 # get_hist() opens a websocket on whatever instance calls it. A single shared
 # instance across concurrent requests races on the same connection and

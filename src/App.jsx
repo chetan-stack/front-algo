@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Chart from './Chart'
 import TradingPanel from './TradingPanel'
 import Login from './Login'
+import Admin from './Admin'
 
 const LAYOUTS = {
   1: { cols: 1, rows: 1 },
@@ -18,12 +19,14 @@ const TABS = [
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token'))
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('isAdmin') === 'true')
   const [count, setCount] = useState(1)
   const [view, setView] = useState('charts')
   const [jump, setJump] = useState(null)
   const { cols, rows } = LAYOUTS[count]
   const market = view.startsWith('crypto') ? 'crypto' : 'india'
   const isTrading = view === 'trading' || view === 'crypto-trading'
+  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }] : TABS
 
   function viewOnChart(req) {
     setJump(req)
@@ -31,18 +34,24 @@ export default function App() {
   }
 
   if (!token) {
-    return <Login onLogin={(t) => { localStorage.setItem('token', t); setToken(t) }} />
+    return <Login onLogin={(t, admin) => {
+      localStorage.setItem('token', t)
+      localStorage.setItem('isAdmin', admin ? 'true' : 'false')
+      setToken(t)
+      setIsAdmin(!!admin)
+    }} />
   }
 
   function logout() {
     localStorage.removeItem('token')
+    localStorage.removeItem('isAdmin')
     setToken(null)
   }
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#131722' }}>
       <div style={{ display: 'flex', gap: 8, padding: '6px 12px', borderBottom: '1px solid #2a2e39' }}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setView(t.id)}
@@ -55,7 +64,7 @@ export default function App() {
             {t.label}
           </button>
         ))}
-        {!isTrading && Object.keys(LAYOUTS).map((n) => (
+        {!isTrading && view !== 'admin' && Object.keys(LAYOUTS).map((n) => (
           <button
             key={n}
             onClick={() => setCount(Number(n))}
@@ -78,7 +87,9 @@ export default function App() {
           Log out
         </button>
       </div>
-      {isTrading ? (
+      {view === 'admin' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin /></div>
+      ) : isTrading ? (
         <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
       ) : (
         <div style={{

@@ -4,7 +4,7 @@ import secrets
 import sqlite3
 from pathlib import Path
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 DB_FILE = Path(__file__).parent / "users.db"
 
@@ -24,7 +24,8 @@ def init_db():
                 salt TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
                 webview_port INTEGER NOT NULL,
-                ai_port INTEGER NOT NULL
+                ai_port INTEGER NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0
             )
         """)
         conn.execute("""
@@ -39,13 +40,18 @@ def _hash(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
 
 
-def create_user(username: str, password: str, webview_port: int, ai_port: int):
+def create_user(username: str, password: str, webview_port: int, ai_port: int, is_admin: bool = False):
     salt = secrets.token_hex(16)
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port) VALUES (?, ?, ?, ?, ?)",
-            (username, salt, _hash(password, salt), webview_port, ai_port),
+            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, salt, _hash(password, salt), webview_port, ai_port, int(is_admin)),
         )
+
+
+def list_users():
+    with _connect() as conn:
+        return conn.execute("SELECT id, username, webview_port, ai_port, is_admin FROM users ORDER BY id").fetchall()
 
 
 def authenticate(username: str, password: str):
@@ -82,4 +88,10 @@ def get_current_user(authorization: str = Header(default=None)):
     user = user_from_token(authorization.removeprefix("Bearer "))
     if user is None:
         raise HTTPException(401, "invalid or expired session")
+    return user
+
+
+def require_admin(user=Depends(get_current_user)):
+    if not user["is_admin"]:
+        raise HTTPException(403, "admin only")
     return user
