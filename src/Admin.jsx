@@ -12,6 +12,7 @@ export default function Admin() {
   const [password, setPassword] = useState('')
   const [demoMode, setDemoMode] = useState(true)
   const [angelone, setAngelone] = useState({ api_key: '', user_id: '', password: '', totp: '' })
+  const [includeIndiaStrategy, setIncludeIndiaStrategy] = useState(false)
   const [includeCrypto, setIncludeCrypto] = useState(false)
   const [cryptoDemoMode, setCryptoDemoMode] = useState(true)
   const [deltaex, setDeltaex] = useState({ api_key: '', api_secret: '' })
@@ -22,6 +23,7 @@ export default function Admin() {
   const [managingUser, setManagingUser] = useState(null)
   const [managingCreds, setManagingCreds] = useState(null)
   const [managingCrypto, setManagingCrypto] = useState(null)
+  const [enableStrategy, setEnableStrategy] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [manageBusy, setManageBusy] = useState(false)
   const [manageMessage, setManageMessage] = useState('')
@@ -45,6 +47,7 @@ export default function Admin() {
     setManageMessage('')
     setCryptoMessage('')
     setNewPassword('')
+    setEnableStrategy(false)
     const res = await apiFetch(`/api/admin/users/${u.username}/credentials`)
     const data = await res.json()
     setManagingCreds(data.success ? data : { demo_mode: true, api_key: '', user_id: '', password: '', totp: '' })
@@ -77,11 +80,15 @@ export default function Admin() {
     try {
       const res = await apiFetch(`/api/admin/users/${managingUser}/credentials`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ angelone: managingCreds.demo_mode ? null : managingCreds }),
+        body: JSON.stringify({ angelone: managingCreds.demo_mode ? null : managingCreds, enable_strategy: enableStrategy }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'failed to save')
-      setManageMessage(`Saved. Dashboard bot: ${data.webview_alive ? '🟢' : '🔴'}, AI bot: ${data.ai_alive ? '🟢' : '🔴'}.`)
+      let msg = `Saved. Dashboard bot: ${data.webview_alive ? '🟢' : '🔴'}, AI bot: ${data.ai_alive ? '🟢' : '🔴'}.`
+      if (data.storesupportzone_alive !== undefined) {
+        msg += ` Auto-strategy: ${data.storesupportzone_alive ? '🟢' : '🔴'}, auto-exit: ${data.store_exit_alive ? '🟢' : '🔴'}.`
+      }
+      setManageMessage(msg)
       loadUsers()
     } catch (err) {
       setManageMessage(`Error: ${err.message}`)
@@ -119,6 +126,7 @@ export default function Admin() {
         body: JSON.stringify({
           username, password,
           angelone: demoMode ? null : angelone,
+          include_india_strategy: includeIndiaStrategy,
           include_crypto: includeCrypto,
           deltaex: includeCrypto && !cryptoDemoMode ? deltaex : null,
         }),
@@ -129,6 +137,7 @@ export default function Admin() {
       setUsername('')
       setPassword('')
       setAngelone({ api_key: '', user_id: '', password: '', totp: '' })
+      setIncludeIndiaStrategy(false)
       setIncludeCrypto(false)
       setCryptoDemoMode(true)
       setDeltaex({ api_key: '', api_secret: '' })
@@ -180,6 +189,13 @@ export default function Admin() {
           )}
 
           <div style={{ ...field, display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39' }}>
+            <input type="checkbox" id="includeIndiaStrategy" checked={includeIndiaStrategy} onChange={(e) => setIncludeIndiaStrategy(e.target.checked)} />
+            <label htmlFor="includeIndiaStrategy" style={{ color: '#d1d4dc', fontSize: 13 }}>
+              Also enable auto-strategy trading (india) — always-on, places/exits orders on its own
+            </label>
+          </div>
+
+          <div style={{ ...field, display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="checkbox" id="includeCrypto" checked={includeCrypto} onChange={(e) => setIncludeCrypto(e.target.checked)} />
             <label htmlFor="includeCrypto" style={{ color: '#d1d4dc', fontSize: 13 }}>Also set up crypto trading</label>
           </div>
@@ -219,6 +235,9 @@ export default function Admin() {
             Created {result.username} — ports {result.webview_port}/{result.ai_port}.{' '}
             Dashboard bot: {result.webview_alive ? '🟢 running' : '🔴 failed to start'}, AI bot: {result.ai_alive ? '🟢 running' : '🔴 failed to start'}.
             {(!result.webview_alive || !result.ai_alive) && ' Check that user\'s log files in SmartApi/logs/ — a real broker login can fail if throttled; retry from a terminal.'}
+            {result.storesupportzone_alive !== undefined && (
+              <> Auto-strategy: {result.storesupportzone_alive ? '🟢' : '🔴'}, auto-exit: {result.store_exit_alive ? '🟢' : '🔴'}.</>
+            )}
             {result.crypto_port != null && (
               <> Crypto (port {result.crypto_port}): dashboard {result.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy {result.crypto_strategy_alive ? '🟢' : '🔴'}.</>
             )}
@@ -234,6 +253,7 @@ export default function Admin() {
               <th style={{ padding: '4px 8px' }}>Username</th>
               <th style={{ padding: '4px 8px' }}>Ports</th>
               <th style={{ padding: '4px 8px' }}>Status</th>
+              <th style={{ padding: '4px 8px' }}>Auto-strategy</th>
               <th style={{ padding: '4px 8px' }}>Crypto</th>
               <th style={{ padding: '4px 8px' }}>Admin</th>
               <th style={{ padding: '4px 8px' }}></th>
@@ -247,6 +267,9 @@ export default function Admin() {
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.webview_port} / {u.ai_port}</td>
                   <td style={{ padding: '6px 8px' }}>
                     {u.webview_alive ? '🟢' : '🔴'} dashboard&nbsp;&nbsp;{u.ai_alive ? '🟢' : '🔴'} AI
+                  </td>
+                  <td style={{ padding: '6px 8px', color: '#787b86' }}>
+                    {u.storesupportzone_alive ? '🟢' : '🔴'} strat&nbsp;&nbsp;{u.store_exit_alive ? '🟢' : '🔴'} exit
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>
                     {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat</>}
@@ -263,7 +286,7 @@ export default function Admin() {
                 </tr>
                 {managingUser === u.username && managingCreds && (
                   <tr>
-                    <td colSpan={6} style={{ padding: '10px 8px', background: '#131722' }}>
+                    <td colSpan={7} style={{ padding: '10px 8px', background: '#131722' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                         <input
                           type="checkbox" id={`demo-${u.username}`} checked={managingCreds.demo_mode}
@@ -291,6 +314,15 @@ export default function Admin() {
                           </div>
                         </div>
                       )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <input
+                          type="checkbox" id={`strategy-${u.username}`} checked={enableStrategy}
+                          onChange={(e) => setEnableStrategy(e.target.checked)}
+                        />
+                        <label htmlFor={`strategy-${u.username}`} style={{ color: '#d1d4dc', fontSize: 13 }}>
+                          Enable auto-strategy trading (india) on save — currently {u.storesupportzone_alive ? '🟢' : '🔴'} strategy, {u.store_exit_alive ? '🟢' : '🔴'} exit
+                        </label>
+                      </div>
                       <button
                         disabled={manageBusy} onClick={saveCredentials}
                         style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12, marginRight: 8 }}

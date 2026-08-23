@@ -121,6 +121,18 @@ CRYPTO_DEFAULT_CONFIG = {
     "buy_or_sell": None,
 }
 
+# Same reasoning as CRYPTO_DEFAULT_CONFIG — storesupportzone.py/store_exit.py
+# (the always-on india auto-strategy watchers) read several of these with
+# bare fetch['key'], and crash on the first scheduled tick if missing
+# (verified directly). Every new india account gets this full shape, not
+# just ones with the strategy enabled, since the manual/AI dashboard config
+# form would eventually write the same keys anyway.
+INDIA_DEFAULT_CONFIG = {
+    "withmoney": False, "auto_place_order": False, "lotsize": 1, "stop_loss": "0",
+    "target_points": "0", "loss_points": "0", "check_all_level": False, "set_otm": "0",
+    "send_alert": False, "buy_or_sell": None, "buy_or_sell_side": None,
+}
+
 
 def _start_bot_process(script_name, script_dir, account_dir, port=None):
     log_dir = SMARTAPI_DIR / "logs"
@@ -214,11 +226,14 @@ def _read_crypto_document_py(account_dir):
 def admin_list_users(admin=Depends(auth.require_admin)):
     users = []
     for u in auth.list_users():
+        account_dir = SMARTAPI_DIR / "accounts" / u["username"]
         entry = {
             "username": u["username"], "webview_port": u["webview_port"], "ai_port": u["ai_port"],
             "crypto_port": u["crypto_port"], "is_admin": bool(u["is_admin"]),
             "webview_alive": not _port_free(u["webview_port"]),
             "ai_alive": not _port_free(u["ai_port"]),
+            "storesupportzone_alive": _pid_alive(account_dir, "storesupportzone.py"),
+            "store_exit_alive": _pid_alive(account_dir, "store_exit.py"),
         }
         if u["crypto_port"] is not None:
             entry["crypto_dashboard_alive"] = not _port_free(u["crypto_port"])
@@ -242,7 +257,7 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
     webview_port, ai_port = _next_ports()
     account_dir.mkdir(parents=True)
     (account_dir / "document.py").write_text(_document_py_content(angelone))
-    (account_dir / "auto_trade.json").write_text(json.dumps({"withmoney": False, "lotsize": 1}, indent=4))
+    (account_dir / "auto_trade.json").write_text(json.dumps(INDIA_DEFAULT_CONFIG, indent=4))
 
     include_crypto = bool(payload.get("include_crypto"))
     crypto_port = None
@@ -273,6 +288,16 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
         "success": True, "username": username, "webview_port": webview_port, "ai_port": ai_port,
         "webview_alive": webview_alive, "ai_alive": ai_alive,
     }
+
+    if payload.get("include_india_strategy"):
+        storesupportzone_proc = _start_bot_process("storesupportzone.py", SMARTAPI_DIR, account_dir)
+        time.sleep(1.5 if not angelone else 8)
+        store_exit_proc = _start_bot_process("store_exit.py", SMARTAPI_DIR, account_dir)
+        time.sleep(1.5 if not angelone else 8)
+        result.update({
+            "storesupportzone_alive": storesupportzone_proc.poll() is None,
+            "store_exit_alive": store_exit_proc.poll() is None,
+        })
 
     if include_crypto:
         crypto_dashboard_proc = _start_bot_process("webviewdataapi.py", CRYPTO_DIR, crypto_account_dir, crypto_port)
@@ -325,7 +350,23 @@ def admin_update_credentials(username: str, payload: dict = Body(...), admin=Dep
     time.sleep(1.5 if not angelone else 3)
     ai_alive = ai_proc.poll() is None
 
-    return {"success": True, "webview_alive": webview_alive, "ai_alive": ai_alive}
+    result = {"success": True, "webview_alive": webview_alive, "ai_alive": ai_alive}
+
+    # Explicit opt-in only — a credentials-only update (e.g. just rotating a
+    # password) shouldn't silently start a real-money auto-strategy loop.
+    if payload.get("enable_strategy"):
+        _kill_pid(account_dir, "storesupportzone.py")
+        _kill_pid(account_dir, "store_exit.py")
+        storesupportzone_proc = _start_bot_process("storesupportzone.py", SMARTAPI_DIR, account_dir)
+        time.sleep(1.5 if not angelone else 8)
+        store_exit_proc = _start_bot_process("store_exit.py", SMARTAPI_DIR, account_dir)
+        time.sleep(1.5 if not angelone else 8)
+        result.update({
+            "storesupportzone_alive": storesupportzone_proc.poll() is None,
+            "store_exit_alive": store_exit_proc.poll() is None,
+        })
+
+    return result
 
 
 # DeltaEx (crypto) credentials work the same way as AngelOne's above — plaintext
