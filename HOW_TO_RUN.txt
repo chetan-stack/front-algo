@@ -1,0 +1,147 @@
+HOW TO RUN THE FULL PROJECT (tradingview-clone + SmartApi, multiuser)
+======================================================================
+
+THE PIECES
+----------
+- Frontend + backend + tunnels   -> tradingview-clone/start.sh
+- Per-user india bots             -> SmartApi/webviewdataapi.py (dashboard)
+                                      SmartApi/ai_order_service.py (manual/AI orders)
+- Per-user india auto-strategy    -> SmartApi/storesupportzone.py (auto place)
+  (opt-in, off by default)           SmartApi/store_exit.py (auto exit)
+- Per-user crypto bots            -> SmartApi/crypto/webviewdataapi.py (dashboard)
+                                      SmartApi/crypto/stetergy.py (auto strategy, no port)
+
+The rule for every one of these except the app itself: THE FOLDER YOU RUN IT
+FROM DECIDES WHICH ACCOUNT IT IS. No flags, no arguments. chetan's account
+lives at the SmartApi/ root (and SmartApi/crypto/ root) since it predates
+the multiuser work; every other user gets their own folder under accounts/.
+
+
+1. START THE APP ITSELF
+------------------------
+    cd ~/tradingview-clone
+    ./start.sh
+
+Starts Vite, the FastAPI backend, and two cloudflare tunnels; patches the
+fresh tunnel URL into src/api.js automatically. Prints both tunnel URLs
+when done. Stop with ./stop.sh.
+
+
+2. ADD A NEW USER — THE EASY WAY
+----------------------------------
+Log in as chetan (the only admin) -> Admin tab -> "Add user":
+  - username, password
+  - demo mode (no broker needed yet) OR real AngelOne credentials
+  - optional: "Also enable auto-strategy trading (india)"
+  - optional: "Also set up crypto trading" (demo or real DeltaEx credentials)
+
+One click does everything: picks free ports, writes that user's account
+files, creates their login, and starts every process you asked for. The
+users table below shows live status (green/red) for each of their bots.
+
+
+3. RUN ANY BOT MANUALLY
+-------------------------
+chetan (root/default account):
+
+    cd ~/PycharmProjects/pythonProject/SmartApi
+    ../venv/bin/python webviewdataapi.py        # india dashboard, port 4100
+    ../venv/bin/python ai_order_service.py      # india AI/manual orders, port 4104
+    ../venv/bin/python storesupportzone.py      # india auto-strategy (no port)
+    ../venv/bin/python store_exit.py            # india auto-exit (no port)
+
+    cd ~/PycharmProjects/pythonProject/SmartApi/crypto
+    ../venv/bin/python webviewdataapi.py        # crypto dashboard, port 4101
+    ../venv/bin/python stetergy.py              # crypto auto-strategy (no port)
+
+Any other user (example: testuser) — same files, their own folder + a PORT:
+
+    cd ~/PycharmProjects/pythonProject/SmartApi/accounts/testuser
+    PORT=4110 ../../../venv/bin/python ../../webviewdataapi.py
+    PORT=4114 ../../../venv/bin/python ../../ai_order_service.py
+    ../../../venv/bin/python ../../storesupportzone.py
+    ../../../venv/bin/python ../../store_exit.py
+
+    cd ~/PycharmProjects/pythonProject/SmartApi/crypto/accounts/testuser
+    PORT=4111 ../../../../venv/bin/python ../../webviewdataapi.py
+    ../../../../venv/bin/python ../../stetergy.py
+
+IMPORTANT — before starting anything manually, check it isn't already
+running from that same folder (see step 5). Two processes writing to the
+same account's files at once is a real bug we hit once already.
+
+
+4. CHECK WHAT'S ALREADY RUNNING
+----------------------------------
+Fastest: the Admin panel's status table (green/red per bot). One blind
+spot — chetan's crypto strategy, since it has no per-user folder for a PID
+file to live in, so the panel can never see it. Check that one yourself.
+
+From a terminal:
+    lsof -i :4100,4104,4101,4110,4114,4111        # whichever ports matter
+    pgrep -fl "stetergy.py"
+    pgrep -fl "storesupportzone.py"
+    pgrep -fl "store_exit.py"
+
+Or run the smoke test (see step 6) — it checks every real user's ports and
+config completeness in one shot.
+
+
+5. STOP SOMETHING
+-------------------
+Anything you started manually: kill <pid>.
+Anything the Admin panel started: "Manage" -> Save on that user's
+credentials restarts it fresh (kills the old one first).
+
+Stop everything at once:
+    kill $(lsof -tiTCP:4001 -sTCP:LISTEN)   # backend
+    kill $(lsof -tiTCP:5173 -sTCP:LISTEN)   # frontend
+    pkill -f "cloudflared tunnel"
+    for p in 4100 4104 4110 4114 4120 4124 4101 4111; do
+      for pid in $(lsof -tiTCP:$p -sTCP:LISTEN); do kill "$pid"; done
+    done
+    pkill -f "stetergy.py"
+    pkill -f "storesupportzone.py"
+    pkill -f "store_exit.py"
+
+
+6. RUN THE SMOKE TEST
+------------------------
+    cd ~/tradingview-clone
+    .venv/bin/python test_full_project.py
+
+No setup needed — checks backend health, every real user's bot ports (read
+live from users.db), and that every account's config has every key the
+always-on strategy loops need (missing keys crash them on their first
+scheduled tick — this has happened twice already).
+
+For the deeper checks too (login, dashboard access, admin gating, "act as"
+impersonation), supply credentials as env vars — never hardcode real
+passwords into a committed file:
+    TEST_ADMIN_PASSWORD=... TEST_USER_PASSWORD=... .venv/bin/python test_full_project.py
+
+
+7. ADMIN-ONLY: ACT AS ANOTHER USER
+-------------------------------------
+Log in as chetan -> Admin tab -> "Act as" next to any user. Puts a
+persistent orange banner on screen and routes every trading action to
+THAT user's account instead of chetan's — including real order placement
+and exits on their real broker account if they have one. "Return to my
+account" in the banner switches back.
+
+
+NOTES / KNOWN LIMITATIONS
+----------------------------
+- chetan's india and crypto accounts run from the SmartApi/ and
+  SmartApi/crypto/ roots, not a per-user folder — a leftover from before
+  multiuser existed. Everything still works, but the Admin panel can't see
+  a manually-started process there (no folder for a PID file).
+- storesupportzone.py/store_exit.py (india auto-strategy) are much bigger,
+  more complex files than crypto's stetergy.py — test any new account's
+  auto-strategy for longer before trusting it unattended.
+- AngelOne (india real accounts) rate-limits logins fired too close
+  together ("Access denied because of exceeding access rate") — the admin
+  flow already staggers this, but if you start india bots manually for a
+  real account, wait several seconds between the dashboard and AI-order
+  process.
+- DeltaEx (crypto) has no such login step, so no rate-limit concern there.
