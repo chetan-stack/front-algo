@@ -20,6 +20,7 @@ const TABS = [
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('isAdmin') === 'true')
+  const [actingAs, setActingAs] = useState(() => localStorage.getItem('actingAs') || '')
   const [count, setCount] = useState(1)
   const [view, setView] = useState('charts')
   const [jump, setJump] = useState(null)
@@ -45,7 +46,19 @@ export default function App() {
   function logout() {
     localStorage.removeItem('token')
     localStorage.removeItem('isAdmin')
+    localStorage.removeItem('actingAs')
     setToken(null)
+  }
+
+  function actAsUser(username) {
+    localStorage.setItem('actingAs', username)
+    setActingAs(username)
+    setView('trading')
+  }
+
+  function stopActingAs() {
+    localStorage.removeItem('actingAs')
+    setActingAs('')
   }
 
   return (
@@ -87,8 +100,22 @@ export default function App() {
           Log out
         </button>
       </div>
+      {actingAs && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px',
+          background: '#5b3a00', color: '#ffcc80', fontSize: 13,
+        }}>
+          <span>⚠️ Acting as <strong>{actingAs}</strong> — trades and dashboard actions affect their account, not yours.</span>
+          <button
+            onClick={stopActingAs}
+            style={{ background: 'transparent', color: '#ffcc80', border: '1px solid #ffcc80', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 12 }}
+          >
+            Return to my account
+          </button>
+        </div>
+      )}
       {view === 'admin' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin /></div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
       ) : isTrading ? (
         <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
       ) : (

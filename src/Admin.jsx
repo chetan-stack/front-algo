@@ -6,7 +6,7 @@ const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2
 const label = { color: '#787b86', fontSize: 12, marginBottom: 4, display: 'block' }
 const field = { marginBottom: 10 }
 
-export default function Admin() {
+export default function Admin({ onActAsUser }) {
   const [users, setUsers] = useState([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -275,12 +275,19 @@ export default function Admin() {
                     {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat</>}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.is_admin ? 'yes' : ''}</td>
-                  <td style={{ padding: '6px 8px' }}>
+                  <td style={{ padding: '6px 8px', display: 'flex', gap: 6 }}>
                     <button
                       onClick={() => openManage(u)}
                       style={{ background: 'transparent', color: '#2962ff', border: '1px solid #2a2e39', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}
                     >
                       {managingUser === u.username ? 'Close' : 'Manage'}
+                    </button>
+                    <button
+                      onClick={() => onActAsUser(u.username)}
+                      title="View and trade on this user's dashboard as if logged in as them"
+                      style={{ background: 'transparent', color: '#ffb74d', border: '1px solid #2a2e39', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}
+                    >
+                      Act as
                     </button>
                   </td>
                 </tr>

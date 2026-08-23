@@ -52,6 +52,23 @@ def me(user=Depends(auth.get_current_user)):
     return {"success": True, "username": user["username"], "is_admin": bool(user["is_admin"])}
 
 
+# Lets an admin view/trade on another user's account — every trading/crypto
+# route below takes an optional ?as_user=<username>, resolved here instead of
+# to the caller's own row. Non-admins passing as_user get a 403; anyone
+# passing their own username (or nothing) gets their own account, unchanged.
+# This is real access: an admin acting as another user can place and exit
+# real orders on that user's real broker account, not just view it.
+def get_effective_user(as_user: str = None, user=Depends(auth.get_current_user)):
+    if not as_user or as_user == user["username"]:
+        return user
+    if not user["is_admin"]:
+        raise HTTPException(403, "only admins can act as another user")
+    target = next((u for u in auth.list_users() if u["username"] == as_user), None)
+    if target is None:
+        raise HTTPException(404, f"no such user {as_user!r}")
+    return target
+
+
 # Admin screen: create a new user's app login + their SmartApi account
 # directory (accounts/<username>/document.py + auto_trade.json), then start
 # their two bot processes. Lives in the SmartApi repo, a sibling directory —
@@ -606,38 +623,38 @@ def trading_api(user):
 
 
 @app.get("/api/trading/dashboard")
-def trading_dashboard(date: str = None, selectclient: str = None, user=Depends(auth.get_current_user)):
+def trading_dashboard(date: str = None, selectclient: str = None, user=Depends(get_effective_user)):
     params = {k: v for k, v in {"date": date, "selectclient": selectclient}.items() if v}
     resp = requests.get(f"{trading_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/config")
-def trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_config(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{trading_api(user)}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/order")
-def trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{trading_api(user)}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/delete-order")
-def trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_delete_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{trading_api(user)}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/trading/exit-order")
-def trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{trading_api(user)}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/trading/pending-orders")
-def trading_pending_orders(selectclient: str = None, user=Depends(auth.get_current_user)):
+def trading_pending_orders(selectclient: str = None, user=Depends(get_effective_user)):
     params = {"selectclient": selectclient} if selectclient else {}
     resp = requests.get(f"{trading_api(user)}/api/pending_orders", params=params, timeout=20)
     return resp.json()
@@ -651,19 +668,19 @@ def ai_order_api(user):
 
 
 @app.post("/api/trading/ai-enter-order")
-def trading_ai_enter_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_ai_enter_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{ai_order_api(user)}/api/ai/enter-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-exit-order")
-def trading_ai_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_ai_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{ai_order_api(user)}/api/ai/exit-order", json=payload, timeout=30)
     return resp.json()
 
 
 @app.post("/api/trading/ai-enter-option-order")
-def trading_ai_enter_option_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def trading_ai_enter_option_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{ai_order_api(user)}/api/ai/enter-option-order", json=payload, timeout=30)
     return resp.json()
 
@@ -680,38 +697,38 @@ def crypto_api(user):
 
 
 @app.get("/api/crypto/trading/dashboard")
-def crypto_trading_dashboard(date: str = None, user=Depends(auth.get_current_user)):
+def crypto_trading_dashboard(date: str = None, user=Depends(get_effective_user)):
     params = {"date": date} if date else {}
     resp = requests.get(f"{crypto_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/config")
-def crypto_trading_config(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def crypto_trading_config(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/dashboard/config", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/order")
-def crypto_trading_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def crypto_trading_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/update_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/delete-order")
-def crypto_trading_delete_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def crypto_trading_delete_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/delete_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.post("/api/crypto/trading/exit-order")
-def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/exit_order", json=payload, timeout=20)
     return resp.json()
 
 
 @app.get("/api/crypto/trading/pending-orders")
-def crypto_trading_pending_orders(user=Depends(auth.get_current_user)):
+def crypto_trading_pending_orders(user=Depends(get_effective_user)):
     resp = requests.get(f"{crypto_api(user)}/api/pending_orders", timeout=20)
     return resp.json()
 
@@ -856,7 +873,7 @@ def ai_analyze(payload: dict = Body(...), user=Depends(auth.get_current_user)):
 # trading_api() already points at) — reuses its bot token/chatids instead of
 # duplicating them here.
 @app.post("/api/telegram/alert")
-def telegram_alert(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+def telegram_alert(payload: dict = Body(...), user=Depends(get_effective_user)):
     text = payload.get("text")
     if not text:
         raise HTTPException(400, "text required")
