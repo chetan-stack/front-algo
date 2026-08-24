@@ -149,6 +149,12 @@ INDIA_DEFAULT_CONFIG = {
     "withmoney": False, "auto_place_order": False, "lotsize": 1, "stop_loss": "0",
     "target_points": "0", "loss_points": "0", "check_all_level": False, "set_otm": "0",
     "send_alert": False, "buy_or_sell": None, "buy_or_sell_side": None,
+    # storesupportzone.py reads load_data()['storeorder'] with a bare access
+    # (storesupportzone.py:2718) — normally created lazily the first time an
+    # order is tracked, but a brand-new account has never done that, so it's
+    # missing until seeded here. Confirmed as the actual crash trigger for
+    # every account except chetan's (old enough to have accumulated one).
+    "storeorder": [],
 }
 
 
