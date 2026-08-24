@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from tvDatafeed import TvDatafeed, Interval
 
 import auth
+import crypto_live_feed
 import live_feed
 
 load_dotenv()
@@ -515,28 +516,43 @@ def quote(symbol: str = "NSE:NIFTY"):
 
 # Live ticks via SmartAPI's websocket, for the chart's "Live" toggle. If the
 # symbol isn't resolvable on SmartAPI (resolve() returns None — e.g. crypto,
-# unlisted contracts) the socket closes immediately and the frontend falls
-# back to polling /api/quote as before.
+# unlisted contracts) try Delta Exchange's public ticker feed instead; if
+# that isn't resolvable either the socket closes and the frontend falls back
+# to polling /api/quote as before. Both feeds are shared/anonymous market
+# data, unrelated to any user's own account.
 @app.websocket("/ws/live")
 async def ws_live(websocket: WebSocket, symbol: str = "NSE:NIFTY"):
     await websocket.accept()
     resolved = await asyncio.to_thread(live_feed.resolve, symbol)
-    if resolved is None:
+    if resolved is not None:
+        exchange_type, token = resolved
+        queue = await live_feed.subscribe(exchange_type, token)
+        try:
+            while True:
+                tick = await queue.get()
+                await websocket.send_json({
+                    "price": tick["last_traded_price"] / 100,
+                    "time": tick["exchange_timestamp"] // 1000,
+                })
+        except WebSocketDisconnect:
+            pass
+        finally:
+            live_feed.unsubscribe(token, queue)
+        return
+
+    delta_symbol = crypto_live_feed.resolve(symbol)
+    if delta_symbol is None:
         await websocket.close(code=4004)
         return
-    exchange_type, token = resolved
-    queue = await live_feed.subscribe(exchange_type, token)
+    queue = await crypto_live_feed.subscribe(delta_symbol)
     try:
         while True:
             tick = await queue.get()
-            await websocket.send_json({
-                "price": tick["last_traded_price"] / 100,
-                "time": tick["exchange_timestamp"] // 1000,
-            })
+            await websocket.send_json(tick)
     except WebSocketDisconnect:
         pass
     finally:
-        live_feed.unsubscribe(token, queue)
+        crypto_live_feed.unsubscribe(delta_symbol, queue)
 
 
 @app.get("/api/search")
