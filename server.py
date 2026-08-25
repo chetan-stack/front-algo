@@ -460,6 +460,28 @@ def admin_reset_password(username: str, payload: dict = Body(...), admin=Depends
 # ponytail: fixed ceiling of 4, tune (or make a queue) if panes/users grow.
 tv_slots = threading.Semaphore(4)
 
+# With multiple users' storesupportzone.py/stetergy.py strategy loops now all
+# polling /api/quote independently, several accounts asking for the same
+# symbol (NIFTY, a shared option strike, ...) within the same few seconds is
+# common — confirmed directly: this saturated tv_slots and caused TradingView
+# connection timeouts even for plain NSE:NIFTY. A short cache collapses that
+# redundant demand into one real fetch per symbol per window, without
+# touching tv_slots' own limit (raising that risks the exact connection-drop
+# failure it exists to prevent).
+_quote_cache = {}  # symbol -> (fetched_at, response_dict)
+QUOTE_CACHE_TTL = 3
+
+
+def _cached_quote(symbol):
+    cached = _quote_cache.get(symbol)
+    if cached and time.time() - cached[0] < QUOTE_CACHE_TTL:
+        return cached[1]
+    df = fetch(symbol, "1", 1)
+    ts, r = df.index[-1], df.iloc[-1]
+    result = {"success": True, "time": epoch(ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
+    _quote_cache[symbol] = (time.time(), result)
+    return result
+
 RESOLUTIONS = {
     "1": Interval.in_1_minute,
     "5": Interval.in_5_minute,
@@ -515,9 +537,7 @@ def ohlcv(symbol: str = "NSE:NIFTY", resolution: str = "1", count: int = 500):
 
 @app.get("/api/quote")
 def quote(symbol: str = "NSE:NIFTY"):
-    df = fetch(symbol, "1", 1)
-    ts, r = df.index[-1], df.iloc[-1]
-    return {"success": True, "time": epoch(ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
+    return _cached_quote(symbol)
 
 
 # Live ticks via SmartAPI's websocket, for the chart's "Live" toggle. If the
