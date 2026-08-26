@@ -153,6 +153,51 @@ def _login():
     return jwt_token, obj.getfeedToken(), api_key
 
 
+# --- shared authenticated session for REST historical-candle lookups ---
+# Demo accounts (no broker session of their own) have no other way to get
+# an option contract's historical candles — AngelOne's REST API needs a
+# real login, and anonymous TradingView doesn't resolve NFO/BFO symbols.
+# Same shared account as the websocket above (same env vars), just kept as
+# a live SmartConnect object here since REST calls need the object itself,
+# not just its derived jwt/feed tokens.
+_rest_obj = None
+_rest_lock = threading.Lock()
+
+
+def _get_rest_session():
+    global _rest_obj
+    with _rest_lock:
+        if _rest_obj is None:
+            api_key = os.environ["SMARTAPI_KEY"]
+            totp = pyotp.TOTP(os.environ["SMARTAPI_TOTP_SECRET"]).now()
+            obj = SmartConnect(api_key=api_key)
+            obj.generateSession(os.environ["SMARTAPI_USER_ID"], os.environ["SMARTAPI_PASSWORD"], totp)
+            _rest_obj = obj
+        return _rest_obj
+
+
+def get_historical_candles(exch_seg, token, interval, from_date, to_date):
+    """[[datetime, open, high, low, close, volume], ...] for the given Angel
+    One (exch_seg, token), via the shared account's own REST session. Retries
+    once with a fresh login if the cached session has gone stale."""
+    params = {
+        "exchange": exch_seg,
+        "symboltoken": token,
+        "interval": interval,
+        "fromdate": from_date,
+        "todate": to_date,
+    }
+    obj = _get_rest_session()
+    try:
+        return obj.getCandleData(params)["data"]
+    except Exception:
+        global _rest_obj
+        with _rest_lock:
+            _rest_obj = None
+        obj = _get_rest_session()
+        return obj.getCandleData(params)["data"]
+
+
 def _on_data(wsapp, message, loop):
     entry = _subs.get(message.get("token"))
     if not entry:

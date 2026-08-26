@@ -12,6 +12,12 @@ export function parseContract(sym) {
   let m
   // TradingView: <UNDERLYING><YYMMDD><C|P><STRIKE>
   if ((m = sym.match(/^([A-Z]+?)\d{6}([CP])(\d+)$/))) return { underlying: m[1], right: m[2], strike: m[3] }
+  // SENSEX monthly (no day component): SENSEX<YY><MMM><STRIKE>(CE|PE) — checked
+  // before the NFO pattern below since that one's DD slot would otherwise
+  // greedily eat the strike's first two digits (confirmed: SENSEX26AUG77300CE
+  // was mis-parsed as strike "300" instead of "77300"). Anchored to the
+  // literal underlying so it can't also swallow NIFTY/BANKNIFTY symbols.
+  if ((m = sym.match(/^(SENSEX)\d{2}[A-Z]{3}(\d+)(CE|PE)$/))) return { underlying: m[1], right: m[3][0], strike: m[2] }
   // NFO (NIFTY/BANKNIFTY): <UNDERLYING><DD><MMM><YY><STRIKE>(CE|PE)
   if ((m = sym.match(/^([A-Z]+?)\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$/))) return { underlying: m[1], right: m[3][0], strike: m[2] }
   // BFO weekly (SENSEX etc): <UNDERLYING><YY><1-char month><DD><STRIKE>(CE|PE)

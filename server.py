@@ -99,20 +99,32 @@ def _next_crypto_port(preferred):
     return port
 
 
-def _document_py_content(angelone):
+def _telegram_document_py_lines(telegram):
+    # telegram bot_token is per-account (Telegram only allows one active
+    # poller per token, so accounts can't share one) — chatids stays empty
+    # until the account's real owner is confirmed: telegrambot.py replies to
+    # their first /start with their chat id instead of assuming the bot
+    # token's holder is legitimate, and an admin pastes it in here.
+    if not telegram or not telegram.get("bot_token"):
+        return "chatids = []\n"
+    return (
+        f"bot_token = {json.dumps(telegram.get('bot_token', ''))}\n"
+        f"chatids = {json.dumps(telegram.get('chatids') or [])}\n"
+    )
+
+
+def _document_py_content(angelone, telegram=None):
     if not angelone:
         return (
             "# Demo account — no broker login, no credentials needed.\n"
             "demo_mode = True\n"
-            "chatids = []\n"
-        )
+        ) + _telegram_document_py_lines(telegram)
     return (
         f"api_key = {json.dumps(angelone.get('api_key', ''))}\n"
         f"user_id = {json.dumps(angelone.get('user_id', ''))}\n"
         f"password = {json.dumps(angelone.get('password', ''))}\n"
         f"totp = {json.dumps(angelone.get('totp', ''))}\n"
-        "chatids = []\n"
-    )
+    ) + _telegram_document_py_lines(telegram)
 
 
 def _crypto_document_py_content(deltaex):
@@ -148,7 +160,14 @@ CRYPTO_DEFAULT_CONFIG = {
 INDIA_DEFAULT_CONFIG = {
     "withmoney": False, "auto_place_order": False, "lotsize": 1, "stop_loss": "0",
     "target_points": "0", "loss_points": "0", "check_all_level": False, "set_otm": "0",
-    "send_alert": False, "buy_or_sell": None, "buy_or_sell_side": None,
+    "send_alert": False,
+    # None here means ce_format()/pe_format()/placeoptionsellorder() never
+    # match either branch — a confirmed buy/sell signal is silently dropped
+    # regardless of check_all_level or auto_place_order. Confirmed as the
+    # actual blocker for testuser/paras/kamal/pulkit early on, fixed by hand
+    # for those 4 at the time but never fixed here — so every account
+    # created since (vijay) inherited the same silent block.
+    "buy_or_sell": "BUY", "buy_or_sell_side": "BOTH",
     # storesupportzone.py reads load_data()['storeorder'] with a bare access
     # (storesupportzone.py:2718) — normally created lazily the first time an
     # order is tracked, but a brand-new account has never done that, so it's
@@ -230,6 +249,8 @@ def _read_document_py(account_dir):
         "user_id": ns.get("user_id", ""),
         "password": ns.get("password", ""),
         "totp": ns.get("totp", ""),
+        "bot_token": ns.get("bot_token", ""),
+        "chatids": ns.get("chatids", []),
     }
 
 
@@ -246,11 +267,74 @@ def _read_crypto_document_py(account_dir):
     }
 
 
+# bot key -> (base dir, script filename stem). Covers every long-running
+# process a user can have, india and crypto, for the log-viewer endpoint
+# below and for the "any recent errors?" flags in the users list.
+LOG_BOTS = {
+    "webview": (SMARTAPI_DIR, "webviewdataapi"),
+    "ai": (SMARTAPI_DIR, "ai_order_service"),
+    "storesupportzone": (SMARTAPI_DIR, "storesupportzone"),
+    "store_exit": (SMARTAPI_DIR, "store_exit"),
+    "telegram": (SMARTAPI_DIR, "telegrambot"),
+    "crypto_webview": (CRYPTO_DIR, "webviewdataapi"),
+    "crypto_strategy": (CRYPTO_DIR, "stetergy"),
+}
+# "error" with a negative lookahead for "code" so AngelOne's routine
+# {'errorcode': ''} success-response field doesn't get flagged as an error.
+ERROR_RE = re.compile(r"traceback|error(?!code)|exception|critical", re.IGNORECASE)
+
+
+def _managed_account_dir(base_dir, username):
+    # accounts/{username} is created by admin_create_user() for every
+    # admin-managed account. If it doesn't exist, this isn't a managed
+    # account at all — it's a legacy root account (chetan) running from
+    # base_dir itself. (Checking existence, not just falling back blindly,
+    # keeps a managed user who hasn't started their bot yet from being
+    # misattributed to chetan's shared root files.)
+    account_dir = base_dir / "accounts" / username
+    return account_dir if account_dir.exists() else base_dir
+
+
+def _log_candidates(username, bot):
+    base_dir, script = LOG_BOTS[bot]
+    log_dir = base_dir / "logs"
+    # {username}_{script}.log is written by _start_bot_process() for every
+    # admin-managed account. {script}.log (no prefix) is the legacy path for
+    # accounts started by hand from the account's own directory (chetan).
+    candidates = [log_dir / f"{username}_{script}.log", log_dir / f"{script}.log"]
+    if bot == "storesupportzone":
+        # storesupportzone.py also writes its own logging.basicConfig output
+        # to optionsorderlog2.log in its cwd — often more useful than the
+        # stdout capture since it logs actual trade decisions, not just crashes.
+        candidates.append(_managed_account_dir(base_dir, username) / "optionsorderlog2.log")
+    return candidates
+
+
+def _tail_lines(path, n=200):
+    if not path.exists():
+        return None
+    with open(path, "r", errors="replace") as f:
+        lines = f.readlines()
+    return [line.rstrip("\n") for line in lines[-n:]]
+
+
+def _log_has_error(lines):
+    return any(ERROR_RE.search(line) for line in lines[-50:])
+
+
+def _find_log(username, bot, n=200):
+    for path in _log_candidates(username, bot):
+        lines = _tail_lines(path, n)
+        if lines is not None:
+            return path, lines
+    return None, []
+
+
 @app.get("/api/admin/users")
 def admin_list_users(admin=Depends(auth.require_admin)):
     users = []
     for u in auth.list_users():
-        account_dir = SMARTAPI_DIR / "accounts" / u["username"]
+        account_dir = _managed_account_dir(SMARTAPI_DIR, u["username"])
         entry = {
             "username": u["username"], "webview_port": u["webview_port"], "ai_port": u["ai_port"],
             "crypto_port": u["crypto_port"], "is_admin": bool(u["is_admin"]),
@@ -258,12 +342,27 @@ def admin_list_users(admin=Depends(auth.require_admin)):
             "ai_alive": not _port_free(u["ai_port"]),
             "storesupportzone_alive": _pid_alive(account_dir, "storesupportzone.py"),
             "store_exit_alive": _pid_alive(account_dir, "store_exit.py"),
+            "telegram_alive": _pid_alive(account_dir, "telegrambot.py"),
+        }
+        entry["errors"] = {
+            bot: _log_has_error(_find_log(u["username"], bot, n=50)[1])
+            for bot in ("webview", "ai", "storesupportzone", "store_exit", "telegram")
         }
         if u["crypto_port"] is not None:
             entry["crypto_dashboard_alive"] = not _port_free(u["crypto_port"])
-            entry["crypto_strategy_alive"] = _pid_alive(CRYPTO_DIR / "accounts" / u["username"], "stetergy.py")
+            entry["crypto_strategy_alive"] = _pid_alive(_managed_account_dir(CRYPTO_DIR, u["username"]), "stetergy.py")
+            for bot in ("crypto_webview", "crypto_strategy"):
+                entry["errors"][bot] = _log_has_error(_find_log(u["username"], bot, n=50)[1])
         users.append(entry)
     return {"success": True, "users": users}
+
+
+@app.get("/api/admin/users/{username}/logs/{bot}")
+def admin_get_log(username: str, bot: str, admin=Depends(auth.require_admin)):
+    if bot not in LOG_BOTS:
+        raise HTTPException(404, "unknown bot")
+    path, lines = _find_log(username, bot)
+    return {"success": True, "bot": bot, "path": str(path) if path else None, "lines": lines, "has_error": _log_has_error(lines)}
 
 
 @app.post("/api/admin/users")
@@ -278,9 +377,10 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
         raise HTTPException(409, f"account directory already exists for {username!r}")
 
     angelone = payload.get("angelone")  # {api_key, user_id, password, totp} or falsy for demo mode
+    telegram = payload.get("telegram")  # {bot_token, chatids} or falsy to skip
     webview_port, ai_port = _next_ports()
     account_dir.mkdir(parents=True)
-    (account_dir / "document.py").write_text(_document_py_content(angelone))
+    (account_dir / "document.py").write_text(_document_py_content(angelone, telegram))
     (account_dir / "auto_trade.json").write_text(json.dumps(INDIA_DEFAULT_CONFIG, indent=4))
 
     include_crypto = bool(payload.get("include_crypto"))
@@ -323,6 +423,11 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
             "store_exit_alive": store_exit_proc.poll() is None,
         })
 
+    if telegram and telegram.get("bot_token"):
+        telegram_proc = _start_bot_process("telegrambot.py", SMARTAPI_DIR / "treadingbot", account_dir)
+        time.sleep(3)
+        result["telegram_alive"] = telegram_proc.poll() is None
+
     if include_crypto:
         crypto_dashboard_proc = _start_bot_process("webviewdataapi.py", CRYPTO_DIR, crypto_account_dir, crypto_port)
         time.sleep(1.5)
@@ -344,7 +449,7 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
 # credentials later and to rotate an existing account's password/TOTP secret.
 @app.get("/api/admin/users/{username}/credentials")
 def admin_get_credentials(username: str, admin=Depends(auth.require_admin)):
-    creds = _read_document_py(SMARTAPI_DIR / "accounts" / username)
+    creds = _read_document_py(_managed_account_dir(SMARTAPI_DIR, username))
     if creds is None:
         raise HTTPException(404, f"no account directory for {username!r}")
     return {"success": True, **creds}
@@ -352,7 +457,7 @@ def admin_get_credentials(username: str, admin=Depends(auth.require_admin)):
 
 @app.put("/api/admin/users/{username}/credentials")
 def admin_update_credentials(username: str, payload: dict = Body(...), admin=Depends(auth.require_admin)):
-    account_dir = SMARTAPI_DIR / "accounts" / username
+    account_dir = _managed_account_dir(SMARTAPI_DIR, username)
     if not account_dir.exists():
         raise HTTPException(404, f"no account directory for {username!r}")
     user_row = next((u for u in auth.list_users() if u["username"] == username), None)
@@ -360,7 +465,8 @@ def admin_update_credentials(username: str, payload: dict = Body(...), admin=Dep
         raise HTTPException(404, f"no such user {username!r}")
 
     angelone = payload.get("angelone")
-    (account_dir / "document.py").write_text(_document_py_content(angelone))
+    telegram = payload.get("telegram")
+    (account_dir / "document.py").write_text(_document_py_content(angelone, telegram))
 
     # document.py is only read at process startup, so the bots need restarting
     # for new/changed credentials (or a demo <-> live switch) to take effect.
@@ -389,6 +495,16 @@ def admin_update_credentials(username: str, payload: dict = Body(...), admin=Dep
             "storesupportzone_alive": storesupportzone_proc.poll() is None,
             "store_exit_alive": store_exit_proc.poll() is None,
         })
+
+    # Same explicit opt-in as enable_strategy above — restarting picks up a
+    # newly-added/changed bot_token or chatids (document.py is only read at
+    # process startup), but shouldn't happen just because credentials were
+    # saved for an unrelated reason.
+    if payload.get("enable_telegram") and telegram and telegram.get("bot_token"):
+        _kill_pid(account_dir, "telegrambot.py")
+        telegram_proc = _start_bot_process("telegrambot.py", SMARTAPI_DIR / "treadingbot", account_dir)
+        time.sleep(3)
+        result["telegram_alive"] = telegram_proc.poll() is None
 
     return result
 
@@ -540,6 +656,32 @@ def quote(symbol: str = "NSE:NIFTY"):
     return _cached_quote(symbol)
 
 
+# Historical candles for demo accounts' get_pre_historical_data()/
+# get_historical_data() (storesupportzone.py/store_exit.py) — they have no
+# broker session of their own, and anonymous TradingView doesn't resolve
+# NFO/BFO option contracts. Backed by the same shared Angel One session
+# live_feed.py already authenticates for live ticks (see its
+# get_historical_candles()). Cached briefly since several demo accounts can
+# ask for the same/overlapping window within seconds of each other, and
+# AngelOne's own historical API is rate-limited per second.
+_candle_cache = {}  # (exch_seg, token, interval) -> (fetched_at, candles)
+CANDLE_CACHE_TTL = 20
+
+
+@app.get("/api/historical-candle")
+def historical_candle(exch_seg: str, token: str, interval: str, from_date: str, to_date: str):
+    key = (exch_seg, token, interval)
+    cached = _candle_cache.get(key)
+    if cached and time.time() - cached[0] < CANDLE_CACHE_TTL:
+        return {"success": True, "data": cached[1]}
+    try:
+        candles = live_feed.get_historical_candles(exch_seg, token, interval, from_date, to_date)
+    except Exception as e:
+        raise HTTPException(502, f"historical candle fetch failed: {e}")
+    _candle_cache[key] = (time.time(), candles)
+    return {"success": True, "data": candles}
+
+
 # Live ticks via SmartAPI's websocket, for the chart's "Live" toggle. If the
 # symbol isn't resolvable on SmartAPI (resolve() returns None — e.g. crypto,
 # unlisted contracts) try Delta Exchange's public ticker feed instead; if
@@ -579,6 +721,32 @@ async def ws_live(websocket: WebSocket, symbol: str = "NSE:NIFTY"):
         pass
     finally:
         crypto_live_feed.unsubscribe(delta_symbol, queue)
+
+
+# For callers that already have Angel One's own (exch_seg, token) — the bot
+# scripts always do, from their own scrip-master lookups — rather than a
+# TradingView symbol string. Skips live_feed.resolve() entirely, so there's
+# no TradingView symbol-format/exchange-prefix guessing (that mismatch is
+# what made the /api/quote-based fallback unreliable for option contracts).
+@app.websocket("/ws/live-token")
+async def ws_live_token(websocket: WebSocket, exch_seg: str, token: str):
+    await websocket.accept()
+    exchange_type = live_feed.EXCHANGE_TYPE_FO.get(exch_seg) or live_feed.EXCHANGE_TYPE.get(exch_seg)
+    if exchange_type is None:
+        await websocket.close(code=4004)
+        return
+    queue = await live_feed.subscribe(exchange_type, token)
+    try:
+        while True:
+            tick = await queue.get()
+            await websocket.send_json({
+                "price": tick["last_traded_price"] / 100,
+                "time": tick["exchange_timestamp"] // 1000,
+            })
+    except WebSocketDisconnect:
+        pass
+    finally:
+        live_feed.unsubscribe(token, queue)
 
 
 @app.get("/api/search")

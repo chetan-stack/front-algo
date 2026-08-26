@@ -3,6 +3,7 @@ import Chart from './Chart'
 import TradingPanel from './TradingPanel'
 import Login from './Login'
 import Admin from './Admin'
+import AdminLogs from './AdminLogs'
 
 const LAYOUTS = {
   1: { cols: 1, rows: 1 },
@@ -27,7 +28,7 @@ export default function App() {
   const { cols, rows } = LAYOUTS[count]
   const market = view.startsWith('crypto') ? 'crypto' : 'india'
   const isTrading = view === 'trading' || view === 'crypto-trading'
-  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }] : TABS
+  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }] : TABS
 
   function viewOnChart(req) {
     setJump(req)
@@ -77,7 +78,7 @@ export default function App() {
             {t.label}
           </button>
         ))}
-        {!isTrading && view !== 'admin' && Object.keys(LAYOUTS).map((n) => (
+        {!isTrading && view !== 'admin' && view !== 'logs' && Object.keys(LAYOUTS).map((n) => (
           <button
             key={n}
             onClick={() => setCount(Number(n))}
@@ -116,6 +117,8 @@ export default function App() {
       )}
       {view === 'admin' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
+      ) : view === 'logs' ? (
+        <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
       ) : isTrading ? (
         <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
       ) : (

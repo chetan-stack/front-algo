@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { parseContract } from './contracts'
 import { apiFetch } from './api'
 
@@ -23,6 +23,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const [orderEdits, setOrderEdits] = useState({})
   const [savingOrder, setSavingOrder] = useState(null)
   const [chartLoading, setChartLoading] = useState(null)
+  const [expandedSignal, setExpandedSignal] = useState(null)
 
   async function load() {
     setLoading(true)
@@ -276,19 +277,56 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
                 <th style={th}>Symbol</th><th style={th}>Trend</th><th style={th}>Signal</th>
-                <th style={th}>Price</th><th style={th}>Support</th><th style={th}>Resistance</th>
+                <th style={th}>Price</th><th style={th}>Support</th><th style={th}>Resistance</th><th style={th}></th>
               </tr></thead>
               <tbody>
-                {data.store.map((s) => (
-                  <tr key={s.symbol}>
-                    <td style={td}>{s.symbol}</td>
-                    <td style={{ ...td, color: s.trend === 'buy' ? '#26a69a' : s.trend === 'sell' ? '#ef5350' : '#d1d4dc' }}>{s.trend}</td>
-                    <td style={td}>{s.mainsignal}</td>
-                    <td style={td}>{s.current_price}</td>
-                    <td style={td}>{s.support}</td>
-                    <td style={td}>{s.resistance}</td>
-                  </tr>
-                ))}
+                {data.store.map((s) => {
+                  const expanded = expandedSignal === s.symbol
+                  return (
+                    <Fragment key={s.symbol}>
+                      <tr
+                        onClick={() => setExpandedSignal(expanded ? null : s.symbol)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <td style={td}>{s.symbol}</td>
+                        <td style={{ ...td, color: s.trend === 'buy' ? '#26a69a' : s.trend === 'sell' ? '#ef5350' : '#d1d4dc' }}>{s.trend}</td>
+                        <td style={td}>{s.mainsignal}</td>
+                        <td style={td}>{s.current_price}</td>
+                        <td style={td}>{s.support}</td>
+                        <td style={td}>{s.resistance}</td>
+                        <td style={{ ...td, color: '#787b86' }}>{expanded ? '▲' : '▼'}</td>
+                      </tr>
+                      {expanded && (
+                        <tr>
+                          <td colSpan={7} style={{ ...td, background: '#131722' }}>
+                            <div style={{ display: 'grid', gap: 10 }}>
+                              <div>
+                                <div style={{ color: '#787b86', fontSize: 11, marginBottom: 2 }}>Buy conditions</div>
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{s.returncorebuy}</div>
+                              </div>
+                              <div>
+                                <div style={{ color: '#787b86', fontSize: 11, marginBottom: 2 }}>Sell conditions</div>
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{s.returncoresell}</div>
+                              </div>
+                              <div>
+                                <div style={{ color: '#787b86', fontSize: 11, marginBottom: 2 }}>Trend message</div>
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{s.trend_message}</div>
+                              </div>
+                              <div>
+                                <div style={{ color: '#787b86', fontSize: 11, marginBottom: 2 }}>Sideways info</div>
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{s.sideways_info}</div>
+                              </div>
+                              <div>
+                                <div style={{ color: '#787b86', fontSize: 11, marginBottom: 2 }}>Fibonacci levels</div>
+                                <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12 }}>{s.fibonacci_levels}</div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>

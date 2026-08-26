@@ -16,6 +16,8 @@ export default function Admin({ onActAsUser }) {
   const [includeCrypto, setIncludeCrypto] = useState(false)
   const [cryptoDemoMode, setCryptoDemoMode] = useState(true)
   const [deltaex, setDeltaex] = useState({ api_key: '', api_secret: '' })
+  const [includeTelegram, setIncludeTelegram] = useState(false)
+  const [telegramToken, setTelegramToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -24,6 +26,7 @@ export default function Admin({ onActAsUser }) {
   const [managingCreds, setManagingCreds] = useState(null)
   const [managingCrypto, setManagingCrypto] = useState(null)
   const [enableStrategy, setEnableStrategy] = useState(false)
+  const [enableTelegram, setEnableTelegram] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [manageBusy, setManageBusy] = useState(false)
   const [manageMessage, setManageMessage] = useState('')
@@ -48,9 +51,10 @@ export default function Admin({ onActAsUser }) {
     setCryptoMessage('')
     setNewPassword('')
     setEnableStrategy(false)
+    setEnableTelegram(false)
     const res = await apiFetch(`/api/admin/users/${u.username}/credentials`)
     const data = await res.json()
-    setManagingCreds(data.success ? data : { demo_mode: true, api_key: '', user_id: '', password: '', totp: '' })
+    setManagingCreds(data.success ? data : { demo_mode: true, api_key: '', user_id: '', password: '', totp: '', bot_token: '', chatids: [] })
     const cryptoRes = await apiFetch(`/api/admin/users/${u.username}/crypto-credentials`)
     const cryptoData = await cryptoRes.json()
     setManagingCrypto(cryptoData)
@@ -80,13 +84,21 @@ export default function Admin({ onActAsUser }) {
     try {
       const res = await apiFetch(`/api/admin/users/${managingUser}/credentials`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ angelone: managingCreds.demo_mode ? null : managingCreds, enable_strategy: enableStrategy }),
+        body: JSON.stringify({
+          angelone: managingCreds.demo_mode ? null : managingCreds,
+          enable_strategy: enableStrategy,
+          telegram: { bot_token: managingCreds.bot_token, chatids: managingCreds.chatids },
+          enable_telegram: enableTelegram,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'failed to save')
       let msg = `Saved. Dashboard bot: ${data.webview_alive ? '🟢' : '🔴'}, AI bot: ${data.ai_alive ? '🟢' : '🔴'}.`
       if (data.storesupportzone_alive !== undefined) {
         msg += ` Auto-strategy: ${data.storesupportzone_alive ? '🟢' : '🔴'}, auto-exit: ${data.store_exit_alive ? '🟢' : '🔴'}.`
+      }
+      if (data.telegram_alive !== undefined) {
+        msg += ` Telegram bot: ${data.telegram_alive ? '🟢' : '🔴'}.`
       }
       setManageMessage(msg)
       loadUsers()
@@ -129,6 +141,7 @@ export default function Admin({ onActAsUser }) {
           include_india_strategy: includeIndiaStrategy,
           include_crypto: includeCrypto,
           deltaex: includeCrypto && !cryptoDemoMode ? deltaex : null,
+          telegram: includeTelegram && telegramToken ? { bot_token: telegramToken, chatids: [] } : null,
         }),
       })
       const data = await res.json()
@@ -141,6 +154,8 @@ export default function Admin({ onActAsUser }) {
       setIncludeCrypto(false)
       setCryptoDemoMode(true)
       setDeltaex({ api_key: '', api_secret: '' })
+      setIncludeTelegram(false)
+      setTelegramToken('')
       loadUsers()
     } catch (err) {
       setError(err.message)
@@ -222,6 +237,20 @@ export default function Admin({ onActAsUser }) {
             </>
           )}
 
+          <div style={{ ...field, display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39' }}>
+            <input type="checkbox" id="includeTelegram" checked={includeTelegram} onChange={(e) => setIncludeTelegram(e.target.checked)} />
+            <label htmlFor="includeTelegram" style={{ color: '#d1d4dc', fontSize: 13 }}>Also set up a Telegram bot for them</label>
+          </div>
+          {includeTelegram && (
+            <div style={field}>
+              <label style={label}>Telegram bot token (from @BotFather)</label>
+              <input style={input} value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} required />
+              <span style={{ color: '#787b86', fontSize: 11 }}>
+                They message their bot with /start once it's running — it replies with their chat ID for you to paste into Manage → Telegram afterward.
+              </span>
+            </div>
+          )}
+
           {error && <div style={{ color: '#ef5350', fontSize: 13, marginBottom: 10 }}>{error}</div>}
           <button
             disabled={busy} type="submit"
@@ -241,6 +270,9 @@ export default function Admin({ onActAsUser }) {
             {result.crypto_port != null && (
               <> Crypto (port {result.crypto_port}): dashboard {result.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy {result.crypto_strategy_alive ? '🟢' : '🔴'}.</>
             )}
+            {result.telegram_alive !== undefined && (
+              <> Telegram bot: {result.telegram_alive ? '🟢 running — have them message it with /start to get their chat ID' : '🔴 failed to start'}.</>
+            )}
           </div>
         )}
       </div>
@@ -255,6 +287,7 @@ export default function Admin({ onActAsUser }) {
               <th style={{ padding: '4px 8px' }}>Status</th>
               <th style={{ padding: '4px 8px' }}>Auto-strategy</th>
               <th style={{ padding: '4px 8px' }}>Crypto</th>
+              <th style={{ padding: '4px 8px' }}>Telegram</th>
               <th style={{ padding: '4px 8px' }}>Admin</th>
               <th style={{ padding: '4px 8px' }}></th>
             </tr>
@@ -266,13 +299,16 @@ export default function Admin({ onActAsUser }) {
                   <td style={{ padding: '6px 8px', color: '#d1d4dc' }}>{u.username}</td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.webview_port} / {u.ai_port}</td>
                   <td style={{ padding: '6px 8px' }}>
-                    {u.webview_alive ? '🟢' : '🔴'} dashboard&nbsp;&nbsp;{u.ai_alive ? '🟢' : '🔴'} AI
+                    {u.webview_alive ? '🟢' : '🔴'} dashboard{u.errors?.webview && ' ⚠️'}&nbsp;&nbsp;{u.ai_alive ? '🟢' : '🔴'} AI{u.errors?.ai && ' ⚠️'}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>
-                    {u.storesupportzone_alive ? '🟢' : '🔴'} strat&nbsp;&nbsp;{u.store_exit_alive ? '🟢' : '🔴'} exit
+                    {u.storesupportzone_alive ? '🟢' : '🔴'} strat{u.errors?.storesupportzone && ' ⚠️'}&nbsp;&nbsp;{u.store_exit_alive ? '🟢' : '🔴'} exit{u.errors?.store_exit && ' ⚠️'}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>
-                    {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat</>}
+                    {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash{u.errors?.crypto_webview && ' ⚠️'}&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat{u.errors?.crypto_strategy && ' ⚠️'}</>}
+                  </td>
+                  <td style={{ padding: '6px 8px', color: '#787b86' }}>
+                    {u.telegram_alive ? '🟢' : '🔴'}{u.errors?.telegram && ' ⚠️'}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>{u.is_admin ? 'yes' : ''}</td>
                   <td style={{ padding: '6px 8px', display: 'flex', gap: 6 }}>
@@ -293,7 +329,7 @@ export default function Admin({ onActAsUser }) {
                 </tr>
                 {managingUser === u.username && managingCreds && (
                   <tr>
-                    <td colSpan={7} style={{ padding: '10px 8px', background: '#131722' }}>
+                    <td colSpan={8} style={{ padding: '10px 8px', background: '#131722' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                         <input
                           type="checkbox" id={`demo-${u.username}`} checked={managingCreds.demo_mode}
@@ -370,6 +406,36 @@ export default function Admin({ onActAsUser }) {
                           {cryptoMessage && <div style={{ marginTop: 8, fontSize: 12, color: '#d1d4dc' }}>{cryptoMessage}</div>}
                         </div>
                       )}
+
+                      <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39' }}>
+                        <div style={{ color: '#d1d4dc', fontSize: 13, marginBottom: 8 }}>
+                          Telegram {u.telegram_alive ? '🟢' : '🔴'}
+                        </div>
+                        <div style={field}>
+                          <label style={label}>Bot token (from @BotFather)</label>
+                          <input
+                            style={input} value={managingCreds.bot_token || ''}
+                            onChange={(e) => setManagingCreds({ ...managingCreds, bot_token: e.target.value })}
+                          />
+                        </div>
+                        <div style={field}>
+                          <label style={label}>Chat ID (they get this by messaging the bot with /start)</label>
+                          <input
+                            style={input} value={(managingCreds.chatids || [])[0] || ''}
+                            onChange={(e) => setManagingCreds({ ...managingCreds, chatids: e.target.value ? [e.target.value] : [] })}
+                            placeholder={managingCreds.bot_token ? 'not linked yet' : ''}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                          <input
+                            type="checkbox" id={`telegram-${u.username}`} checked={enableTelegram}
+                            onChange={(e) => setEnableTelegram(e.target.checked)}
+                          />
+                          <label htmlFor={`telegram-${u.username}`} style={{ color: '#d1d4dc', fontSize: 13 }}>
+                            (Re)start Telegram bot on save
+                          </label>
+                        </div>
+                      </div>
 
                       <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <input
