@@ -9,6 +9,7 @@ which already talks to this same endpoint/channel successfully.
 """
 import asyncio
 import json
+import re
 import threading
 import time
 
@@ -28,9 +29,17 @@ SYMBOL_MAP = {
     "ETHUSDT": "ETHUSD",
 }
 
+# Option contract symbols (e.g. "C-BTC-79800-290826") are already Delta's own
+# symbol format — confirmed v2/ticker sends real close/symbol data for these
+# same as it does for spot — so pass them straight through instead of only
+# recognizing the two spot pairs.
+DELTA_OPTION_RE = re.compile(r"^[CP]-(BTC|ETH)-\d+-\d{6}$")
+
 
 def resolve(symbol):
-    """'BINANCE:BTCUSDT' -> 'BTCUSD', or None if not mapped (caller falls back to polling)."""
+    """'BINANCE:BTCUSDT' -> 'BTCUSD', a raw option symbol -> itself, or None (caller falls back to polling)."""
+    if DELTA_OPTION_RE.match(symbol):
+        return symbol
     _, sep, sym = symbol.partition(":")
     return SYMBOL_MAP.get(sym if sep else symbol)
 
@@ -102,6 +111,8 @@ def unsubscribe(delta_symbol, queue):
 def demo():
     assert resolve("BINANCE:BTCUSDT") == "BTCUSD"
     assert resolve("BINANCE:NOSUCHCOIN") is None
+    assert resolve("C-BTC-79800-290826") == "C-BTC-79800-290826"
+    assert resolve("P-ETH-3000-290826") == "P-ETH-3000-290826"
     print("crypto_live_feed self-check passed")
 
 

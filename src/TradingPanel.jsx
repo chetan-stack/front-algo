@@ -24,6 +24,10 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const [savingOrder, setSavingOrder] = useState(null)
   const [chartLoading, setChartLoading] = useState(null)
   const [expandedSignal, setExpandedSignal] = useState(null)
+  const [cryptoQuery, setCryptoQuery] = useState('')
+  const [cryptoUnderlying, setCryptoUnderlying] = useState('BTC')
+  const [cryptoResults, setCryptoResults] = useState(null)
+  const [cryptoSearchBusy, setCryptoSearchBusy] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -55,6 +59,8 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       trade_nifty: config.NIFTY,
       trade_banknifty: config.BANKNIFTY,
       trade_SENSEX: config.SENSEX,
+      trade_btcusd: config.BTCUSD,
+      trade_ethusd: config.ETHUSD,
     }
     const res = await apiFetch(`${prefix}/config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -63,6 +69,19 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     setSavingConfig(false)
     if (d.status === 'success') setConfig(d.form_data)
     else setError(d.message)
+  }
+
+  async function searchCryptoOptions() {
+    setCryptoSearchBusy(true)
+    try {
+      const params = new URLSearchParams({ underlying: cryptoUnderlying, ...(cryptoQuery ? { query: cryptoQuery } : {}) })
+      const res = await apiFetch(`/api/crypto/search?${params}`)
+      const d = await res.json()
+      setCryptoResults(d.success ? d.results : [])
+    } catch (e) {
+      setCryptoResults([])
+    }
+    setCryptoSearchBusy(false)
   }
 
   async function saveOrder(symbol) {
@@ -189,6 +208,18 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               </label>
             </>
           )}
+          {market === 'crypto' && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="checkbox" checked={!!config.BTCUSD} onChange={(e) => setConfig({ ...config, BTCUSD: e.target.checked })} />
+                Trade BTC
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="checkbox" checked={!!config.ETHUSD} onChange={(e) => setConfig({ ...config, ETHUSD: e.target.checked })} />
+                Trade ETH
+              </label>
+            </>
+          )}
           <label>Stop loss <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} /></label>
           {market === 'india' && (
             <label>OTM offset <input style={input} value={config.set_otm ?? ''} onChange={(e) => setConfig({ ...config, set_otm: e.target.value })} /></label>
@@ -267,6 +298,58 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {market === 'crypto' && (
+        <div style={box}>
+          <b>Search options contracts</b>
+          <div style={{ color: '#787b86', fontSize: 11, marginTop: 2, marginBottom: 8 }}>
+            Real, currently-live DeltaEx contracts — not TradingView (it only lists CME's unrelated bitcoin options).
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select style={{ ...input, width: 90 }} value={cryptoUnderlying} onChange={(e) => setCryptoUnderlying(e.target.value)}>
+              <option value="BTC">BTC</option>
+              <option value="ETH">ETH</option>
+            </select>
+            <input
+              style={{ ...input, width: 160 }} placeholder="strike or symbol"
+              value={cryptoQuery} onChange={(e) => setCryptoQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && searchCryptoOptions()}
+            />
+            <button onClick={searchCryptoOptions} disabled={cryptoSearchBusy} style={{ ...input, cursor: 'pointer', width: 'auto', background: '#2a2e39' }}>
+              {cryptoSearchBusy ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+          {cryptoResults && (
+            <div style={{ overflowX: 'auto', marginTop: 10, maxHeight: 260, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr>
+                  <th style={th}>Symbol</th><th style={th}>Type</th><th style={th}>Strike</th><th style={th}>Expiry</th><th style={th}></th>
+                </tr></thead>
+                <tbody>
+                  {cryptoResults.length === 0 ? (
+                    <tr><td colSpan={5} style={{ ...td, color: '#787b86' }}>No live contracts matched.</td></tr>
+                  ) : cryptoResults.map((r) => (
+                    <tr key={r.symbol}>
+                      <td style={td}>{r.symbol}</td>
+                      <td style={{ ...td, color: r.type === 'call' ? '#26a69a' : '#ef5350' }}>{r.type}</td>
+                      <td style={td}>{r.strike}</td>
+                      <td style={td}>{new Date(r.expiry).toLocaleDateString()}</td>
+                      <td style={td}>
+                        <button
+                          onClick={() => onViewOnChart({ symbol: r.symbol, label: `${r.symbol} — ${r.description}` })}
+                          style={{ ...input, cursor: 'pointer', width: 'auto' }}
+                        >
+                          View chart
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

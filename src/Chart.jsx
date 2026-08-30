@@ -91,6 +91,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [emaPeriod, setEmaPeriod] = useState('20')
   const emaSeriesRef = useRef({})
   const [live, setLive] = useState(false)
+  const [liveConnected, setLiveConnected] = useState(false)
   const hasMatchedOrderRef = useRef(false)
 
   useEffect(() => {
@@ -348,10 +349,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       }
     }
 
-    function startLive() {
+    function startLive(retriesLeft = 3) {
       let lastTickAt = Date.now()
       let alerted = false
       ws = new WebSocket(`${API.replace('http', 'ws')}/ws/live?symbol=${encodeURIComponent(symbol)}`)
+      ws.onopen = () => setLiveConnected(true)
       ws.onmessage = (e) => {
         lastTickAt = Date.now()
         alerted = false
@@ -359,9 +361,15 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       }
       ws.onclose = () => {
         clearInterval(watchdogId)
-        // Symbol not resolvable on SmartAPI, or the connection dropped — the
-        // "else old approach works" fallback, with a heads-up that it happened.
-        if (!cancelled && !pollId) {
+        setLiveConnected(false)
+        if (cancelled) return
+        // First few drops (network blip, backend restart) just reconnect —
+        // only fall back to polling once retries are exhausted, so a single
+        // hiccup doesn't silently strand the chart in slow-poll mode while
+        // the "Live" button still shows on.
+        if (retriesLeft > 0) {
+          setTimeout(() => { if (!cancelled) startLive(retriesLeft - 1) }, 2000)
+        } else if (!pollId) {
           pushToast(`Live feed unavailable for ${symbol} — showing polled data`)
           startPoll()
         }
@@ -401,6 +409,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       else startPoll()
     }
 
+    setLiveConnected(false)
     load()
 
     return () => {
@@ -623,10 +632,10 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         </select>
         <button
           onClick={() => setLive((v) => !v)}
-          title="Stream ticks via SmartAPI websocket when available; falls back to polling otherwise"
-          style={{ background: live ? '#26a69a' : 'transparent', color: live ? '#131722' : '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+          title={live && !liveConnected ? 'Reconnecting to live feed…' : 'Stream ticks via websocket when available; falls back to polling otherwise'}
+          style={{ background: liveConnected ? '#26a69a' : live ? '#5d4a1a' : 'transparent', color: liveConnected ? '#131722' : live ? '#f0b90b' : '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
         >
-          {live ? '● Live' : 'Live'}
+          {liveConnected ? '● Live' : live ? '○ Reconnecting…' : 'Live'}
         </button>
         {nextClose != null && (
           <span style={{ color: '#787b86', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>

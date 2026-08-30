@@ -148,7 +148,11 @@ def _crypto_document_py_content(deltaex):
 CRYPTO_DEFAULT_CONFIG = {
     "withmoney": False, "auto_place_order": False, "stop_loss": "0", "lotsize": "1",
     "target_points": "0", "loss_points": "0", "trade_range_min": None, "trade_range_max": None,
-    "buy_or_sell": None,
+    # None here means stetergy.py's placeorder logic never matches either
+    # branch — a confirmed signal silently drops. Same root-cause bug found
+    # and fixed for INDIA_DEFAULT_CONFIG's buy_or_sell/buy_or_sell_side.
+    "buy_or_sell": "BUY",
+    "BTCUSD": True, "ETHUSD": True,
 }
 
 # Same reasoning as CRYPTO_DEFAULT_CONFIG — storesupportzone.py/store_exit.py
@@ -297,11 +301,23 @@ def _managed_account_dir(base_dir, username):
 
 def _log_candidates(username, bot):
     base_dir, script = LOG_BOTS[bot]
-    log_dir = base_dir / "logs"
-    # {username}_{script}.log is written by _start_bot_process() for every
-    # admin-managed account. {script}.log (no prefix) is the legacy path for
-    # accounts started by hand from the account's own directory (chetan).
-    candidates = [log_dir / f"{username}_{script}.log", log_dir / f"{script}.log"]
+    # _start_bot_process() always writes to SMARTAPI_DIR/logs, india and
+    # crypto bots alike — base_dir here is only where the script itself lives
+    # (SMARTAPI_DIR vs CRYPTO_DIR), not where its log ends up. Using base_dir
+    # for log_dir too used to silently point crypto bots at crypto/logs/,
+    # a directory nothing actually writes to, making the Logs tab show
+    # "(empty)" for every crypto bot.
+    log_dir = SMARTAPI_DIR / "logs"
+    # _start_bot_process() names the log file after account_dir.name, not the
+    # username — for a normal managed account those are the same, but for
+    # chetan's legacy root account (no accounts/chetan/ dir) account_dir IS
+    # base_dir, so its .name is "SmartApi" (india) or "crypto" (crypto) rather
+    # than "chetan". Resolve the same way _start_bot_process's caller does so
+    # this always matches the file that's actually on disk.
+    account_dir_name = _managed_account_dir(base_dir, username).name
+    # {script}.log (no prefix) is a legacy path from before _start_bot_process
+    # existed, kept as a last-resort fallback.
+    candidates = [log_dir / f"{account_dir_name}_{script}.log", log_dir / f"{script}.log"]
     if bot == "storesupportzone":
         # storesupportzone.py also writes its own logging.basicConfig output
         # to optionsorderlog2.log in its cwd — often more useful than the
@@ -641,8 +657,37 @@ def fetch(symbol: str, resolution: str, n_bars: int):
     return df
 
 
+# DeltaEx's own option contracts (e.g. "C-BTC-80000-290826") aren't listed
+# on TradingView at all (it only has CME's unrelated bitcoin options), so
+# /api/ohlcv and /api/quote route these to DeltaEx's own public candle/ticker
+# API instead of fetch()/TvDatafeed — same public data crypto/stetergy.py
+# already reads directly, no login needed.
+DELTA_OPTION_RE = re.compile(r"^[CP]-(BTC|ETH)-\d+-\d{6}$")
+DELTA_RESOLUTION_MAP = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "240": "4h", "D": "1d"}
+DELTA_RESOLUTION_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+
+
+def _fetch_delta_ohlcv(symbol, resolution, count):
+    delta_res = DELTA_RESOLUTION_MAP.get(resolution)
+    if delta_res is None:
+        raise HTTPException(400, f"unsupported resolution '{resolution}'")
+    end = int(time.time())
+    start = end - DELTA_RESOLUTION_SECONDS[delta_res] * count
+    resp = requests.get("https://cdn.india.deltaex.org/v2/history/candles", params={
+        "resolution": delta_res, "symbol": symbol, "start": start, "end": end,
+    }, timeout=15)
+    data = resp.json()
+    if not data.get("success"):
+        raise HTTPException(502, "delta candle fetch failed")
+    return sorted(data.get("result", []), key=lambda c: c["time"])
+
+
 @app.get("/api/ohlcv")
 def ohlcv(symbol: str = "NSE:NIFTY", resolution: str = "1", count: int = 500):
+    if DELTA_OPTION_RE.match(symbol):
+        candles = _fetch_delta_ohlcv(symbol, resolution, count)
+        bars = [{"time": c["time"], "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]} for c in candles]
+        return {"success": True, "bars": bars}
     df = fetch(symbol, resolution, count)
     bars = [
         {"time": epoch(ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
@@ -653,6 +698,16 @@ def ohlcv(symbol: str = "NSE:NIFTY", resolution: str = "1", count: int = 500):
 
 @app.get("/api/quote")
 def quote(symbol: str = "NSE:NIFTY"):
+    if DELTA_OPTION_RE.match(symbol):
+        resp = requests.get(f"https://cdn.india.deltaex.org/v2/tickers/{symbol}", timeout=10)
+        result = resp.json().get("result")
+        if not result:
+            raise HTTPException(502, "no data returned")
+        return {
+            "success": True, "time": int(time.time()),
+            "open": result.get("open"), "high": result.get("high"),
+            "low": result.get("low"), "close": result.get("close"),
+        }
     return _cached_quote(symbol)
 
 
@@ -767,6 +822,40 @@ def search(query: str, exchange: str = "", type: str = ""):
         for item in resp.json()
     ]
     return {"success": True, "results": results}
+
+
+# TradingView doesn't list DeltaEx's own option contracts at all (it only has
+# CME's bitcoin options — a different, unrelated product), so this hits
+# DeltaEx's own public product listing instead of the TradingView search
+# above. No login needed — same public market data every account already
+# uses for LTP/candles.
+DELTA_PRODUCTS_URL = "https://cdn.india.deltaex.org/v2/products"
+
+
+@app.get("/api/crypto/search")
+def crypto_search(query: str = "", underlying: str = "BTC"):
+    resp = requests.get(DELTA_PRODUCTS_URL, params={
+        "contract_types": "call_options,put_options",
+        "underlying_asset_symbols": underlying,
+    }, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(502, "crypto symbol search failed")
+    query = query.strip().lower()
+    results = []
+    for p in resp.json().get("result", []):
+        if p.get("state") != "live":
+            continue
+        if query and query not in p["symbol"].lower() and query not in str(p.get("strike_price", "")):
+            continue
+        results.append({
+            "symbol": p["symbol"],
+            "description": p.get("description", ""),
+            "type": "call" if p.get("contract_type") == "call_options" else "put",
+            "strike": p.get("strike_price"),
+            "expiry": p.get("settlement_time"),
+        })
+    results.sort(key=lambda r: (r["expiry"], float(r["strike"])))
+    return {"success": True, "results": results[:100]}
 
 
 # TradingView's search only returns individual strikes, not a chain listing —
