@@ -87,7 +87,7 @@ export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis,
   }
 
   return (
-    <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 320, background: '#1e222d', borderLeft: '1px solid #2a2e39', zIndex: 25, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 320, maxWidth: '92vw', background: '#1e222d', borderLeft: '1px solid #2a2e39', zIndex: 25, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #2a2e39' }}>
         <b style={{ color: '#d1d4dc', fontSize: 13 }}>AI Assistant</b>
         <button onClick={onClose} style={{ background: 'transparent', color: '#787b86', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>

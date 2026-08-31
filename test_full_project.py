@@ -163,8 +163,9 @@ def check_strategy_processes(users):
         if u["crypto_port"] is not None:
             crypto_account_dir = CRYPTO_DIR / "accounts" / u["username"]
             if crypto_account_dir.exists():
-                alive = _pid_alive(crypto_account_dir, "stetergy.py")
-                record(f"{u['username']}: stetergy.py running", alive, "" if alive else "not started via admin, or crashed — check logs/")
+                for script in ("stetergy.py", "stetergy_exit.py"):
+                    alive = _pid_alive(crypto_account_dir, script)
+                    record(f"{u['username']}: {script} running", alive, "" if alive else "not started via admin, or crashed — check logs/")
             else:
                 record(f"{u['username']}: crypto strategy process", None, "root/default account — no pidfile, check manually (known blind spot)")
 

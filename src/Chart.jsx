@@ -587,16 +587,17 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
 
   return (
     <div style={{ height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#131722', position: 'relative' }}>
-      <div style={{ display: 'flex', gap: 12, padding: '8px 12px', alignItems: 'center', borderBottom: '1px solid #2a2e39', position: 'relative' }}>
+      <div className="chart-toolbar" style={{ display: 'flex', gap: 12, padding: '8px 12px', alignItems: 'center', borderBottom: '1px solid #2a2e39', position: 'relative' }}>
         <div style={{ position: 'relative' }}>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={optionsOnly ? 'e.g. NIFTY 24300 CE' : 'Search stocks, options, crypto...'}
-            style={{ background: '#1e222d', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '6px 10px', width: 260 }}
+            className="search-input"
+            style={{ background: '#1e222d', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '6px 10px' }}
           />
           {results.length > 0 && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, width: 360, maxHeight: 320, overflowY: 'auto', background: '#1e222d', border: '1px solid #2a2e39', zIndex: 10 }}>
+            <div style={{ position: 'absolute', top: '100%', left: 0, width: 360, maxWidth: '90vw', maxHeight: 320, overflowY: 'auto', background: '#1e222d', border: '1px solid #2a2e39', zIndex: 10 }}>
               {results.map((r, i) => (
                 <div
                   key={i}
@@ -915,7 +916,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
           onClick={() => { setChain(null); setChainLoading(false) }}
           style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, maxHeight: '85%', overflowY: 'auto', minWidth: 360 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, maxHeight: '85%', maxWidth: '95vw', overflow: 'auto', minWidth: 360 }}>
             {chainLoading && <div style={{ padding: 24, color: '#d1d4dc' }}>Loading chain… (~10-20s, fetching each strike live)</div>}
             {chain?.error && <div style={{ padding: 24, color: '#ef5350' }}>No option chain found for this symbol.</div>}
             {chain && !chain.error && (

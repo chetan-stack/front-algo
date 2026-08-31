@@ -10,6 +10,9 @@ export const UNDERLYING_ALIASES = { BSX: 'SENSEX' }
 
 export function parseContract(sym) {
   let m
+  // DeltaEx crypto options (server.py's DELTA_OPTION_RE): <C|P>-<BTC|ETH>-<STRIKE>-<DDMMYY>
+  // — right comes first here, unlike every india format below.
+  if ((m = sym.match(/^([CP])-(BTC|ETH)-(\d+)-\d{6}$/))) return { underlying: m[2], right: m[1], strike: m[3] }
   // TradingView: <UNDERLYING><YYMMDD><C|P><STRIKE>
   if ((m = sym.match(/^([A-Z]+?)\d{6}([CP])(\d+)$/))) return { underlying: m[1], right: m[2], strike: m[3] }
   // SENSEX monthly (no day component): SENSEX<YY><MMM><STRIKE>(CE|PE) — checked

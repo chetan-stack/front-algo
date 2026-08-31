@@ -8,6 +8,7 @@ const LOG_BOTS = [
   { key: 'store_exit', label: 'Auto-exit' },
   { key: 'crypto_webview', label: 'Crypto dashboard', crypto: true },
   { key: 'crypto_strategy', label: 'Crypto strategy', crypto: true },
+  { key: 'crypto_exit', label: 'Crypto exit', crypto: true },
 ]
 const ERROR_RE = /traceback|error(?!code)|exception|critical/i
 

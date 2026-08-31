@@ -4,6 +4,9 @@ import TradingPanel from './TradingPanel'
 import Login from './Login'
 import Admin from './Admin'
 import AdminLogs from './AdminLogs'
+import Notifications from './Notifications'
+import OrderBook from './OrderBook'
+import FailedOrders from './FailedOrders'
 
 const LAYOUTS = {
   1: { cols: 1, rows: 1 },
@@ -16,6 +19,9 @@ const TABS = [
   { id: 'trading', label: 'Trading' },
   { id: 'crypto-charts', label: 'Crypto Charts' },
   { id: 'crypto-trading', label: 'Crypto Trading' },
+  { id: 'orderbook', label: 'Order Book' },
+  { id: 'failed-orders', label: 'Failed Orders' },
+  { id: 'notifications', label: 'Notifications' },
 ]
 
 export default function App() {
@@ -28,11 +34,14 @@ export default function App() {
   const { cols, rows } = LAYOUTS[count]
   const market = view.startsWith('crypto') ? 'crypto' : 'india'
   const isTrading = view === 'trading' || view === 'crypto-trading'
-  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }] : TABS
+  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }, { id: 'all-notifications', label: 'All Notifications' }] : TABS
 
   function viewOnChart(req) {
     setJump(req)
-    setView('charts')
+    // Land on whichever charts tab matches where "View chart" was clicked
+    // from — used to always go to the india charts view, even from the
+    // crypto trading tab.
+    setView(view === 'crypto-trading' ? 'crypto-charts' : 'charts')
   }
 
   if (!token) {
@@ -62,42 +71,30 @@ export default function App() {
     setActingAs('')
   }
 
+  const isChartsView = view === 'charts' || view === 'crypto-charts'
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#131722' }}>
-      <div style={{ display: 'flex', gap: 8, padding: '6px 12px', borderBottom: '1px solid #2a2e39' }}>
+      <div className="tab-bar">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setView(t.id)}
-            style={{
-              background: view === t.id ? '#2a2e39' : 'transparent',
-              color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4,
-              padding: '4px 10px', cursor: 'pointer',
-            }}
+            className={`tab-btn${view === t.id ? ' active' : ''}`}
           >
             {t.label}
           </button>
         ))}
-        {!isTrading && view !== 'admin' && view !== 'logs' && Object.keys(LAYOUTS).map((n) => (
+        {isChartsView && Object.keys(LAYOUTS).map((n) => (
           <button
             key={n}
             onClick={() => setCount(Number(n))}
-            style={{
-              background: count === Number(n) ? '#2a2e39' : 'transparent',
-              color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4,
-              padding: '4px 10px', cursor: 'pointer',
-            }}
+            className={`tab-btn${count === Number(n) ? ' active' : ''}`}
           >
             {n} screen{n === '1' ? '' : 's'}
           </button>
         ))}
-        <button
-          onClick={logout}
-          style={{
-            marginLeft: 'auto', background: 'transparent', color: '#787b86',
-            border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
-          }}
-        >
+        <button onClick={logout} className="tab-btn tab-bar-spacer" style={{ color: '#787b86' }}>
           Log out
         </button>
       </div>
@@ -119,6 +116,14 @@ export default function App() {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
       ) : view === 'logs' ? (
         <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
+      ) : view === 'all-notifications' ? (
+        <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
+      ) : view === 'notifications' ? (
+        <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
+      ) : view === 'orderbook' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
+      ) : view === 'failed-orders' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
       ) : isTrading ? (
         <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
       ) : (

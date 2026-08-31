@@ -282,6 +282,7 @@ LOG_BOTS = {
     "telegram": (SMARTAPI_DIR, "telegrambot"),
     "crypto_webview": (CRYPTO_DIR, "webviewdataapi"),
     "crypto_strategy": (CRYPTO_DIR, "stetergy"),
+    "crypto_exit": (CRYPTO_DIR, "stetergy_exit"),
 }
 # "error" with a negative lookahead for "code" so AngelOne's routine
 # {'errorcode': ''} success-response field doesn't get flagged as an error.
@@ -366,8 +367,10 @@ def admin_list_users(admin=Depends(auth.require_admin)):
         }
         if u["crypto_port"] is not None:
             entry["crypto_dashboard_alive"] = not _port_free(u["crypto_port"])
-            entry["crypto_strategy_alive"] = _pid_alive(_managed_account_dir(CRYPTO_DIR, u["username"]), "stetergy.py")
-            for bot in ("crypto_webview", "crypto_strategy"):
+            crypto_account_dir = _managed_account_dir(CRYPTO_DIR, u["username"])
+            entry["crypto_strategy_alive"] = _pid_alive(crypto_account_dir, "stetergy.py")
+            entry["crypto_exit_alive"] = _pid_alive(crypto_account_dir, "stetergy_exit.py")
+            for bot in ("crypto_webview", "crypto_strategy", "crypto_exit"):
                 entry["errors"][bot] = _log_has_error(_find_log(u["username"], bot, n=50)[1])
         users.append(entry)
     return {"success": True, "users": users}
@@ -379,6 +382,63 @@ def admin_get_log(username: str, bot: str, admin=Depends(auth.require_admin)):
         raise HTTPException(404, "unknown bot")
     path, lines = _find_log(username, bot)
     return {"success": True, "bot": bot, "path": str(path) if path else None, "lines": lines, "has_error": _log_has_error(lines)}
+
+
+# "order" is broad by design — every order-placement/rejection message across
+# storesupportzone.py/store_exit.py/ai_order_service.py/stetergy.py contains
+# it (surveyed the actual message strings), so this catches order status,
+# rejections, and demo-trade fallbacks without needing a bespoke pattern per
+# call site. ERROR_RE (above) covers crashes/tracebacks the same way it
+# already does for the per-user error flags in admin_list_users.
+ORDER_RE = re.compile(r"order|reject", re.IGNORECASE)
+NOTIFICATION_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]")
+# Flask/Werkzeug's own HTTP access log line ('127.0.0.1 - - [date] "GET
+# /api/pending_orders HTTP/1.1" 200 -') matches ORDER_RE on the route name
+# alone — filter it out so real order-status/error messages aren't drowned
+# out by every request to an "...order..." endpoint.
+ACCESS_LOG_RE = re.compile(r'"\w+ \S+ HTTP/\d')
+
+
+def _notifications_for_user(user_row, n=40):
+    items = []
+    bots = list(LOG_BOTS.keys()) if user_row["crypto_port"] is not None else [b for b in LOG_BOTS if not b.startswith("crypto_")]
+    for bot in bots:
+        _, lines = _find_log(user_row["username"], bot, n=n)
+        for line in lines:
+            if ACCESS_LOG_RE.search(line):
+                continue
+            is_error = bool(ERROR_RE.search(line))
+            is_order = bool(ORDER_RE.search(line))
+            if not (is_error or is_order):
+                continue
+            m = NOTIFICATION_TIMESTAMP_RE.match(line)
+            items.append({
+                "username": user_row["username"], "bot": bot,
+                "category": "error" if is_error else "order",
+                "timestamp": m.group(1) if m else None,
+                "line": line,
+            })
+    return items
+
+
+@app.get("/api/admin/notifications")
+def admin_notifications(admin=Depends(auth.require_admin)):
+    items = [it for u in auth.list_users() for it in _notifications_for_user(u)]
+    # Most recent first. Falls back to "" (sorts last) for the rare line with
+    # no timestamp prefix rather than crashing the sort on None comparisons.
+    items.sort(key=lambda it: it["timestamp"] or "", reverse=True)
+    return {"success": True, "items": items[:300]}
+
+
+# Any logged-in user's own notifications — same error/order scan as the admin
+# feed above, just scoped to one account instead of every user. Uses
+# get_effective_user so an admin "acting as" someone sees that user's
+# notifications, same as every other trading route already does.
+@app.get("/api/notifications")
+def my_notifications(user=Depends(get_effective_user)):
+    items = _notifications_for_user(user)
+    items.sort(key=lambda it: it["timestamp"] or "", reverse=True)
+    return {"success": True, "items": items[:300]}
 
 
 @app.post("/api/admin/users")
@@ -449,10 +509,13 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
         time.sleep(1.5)
         crypto_strategy_proc = _start_bot_process("stetergy.py", CRYPTO_DIR, crypto_account_dir)
         time.sleep(1.5)
+        crypto_exit_proc = _start_bot_process("stetergy_exit.py", CRYPTO_DIR, crypto_account_dir)
+        time.sleep(1.5)
         result.update({
             "crypto_port": crypto_port,
             "crypto_dashboard_alive": crypto_dashboard_proc.poll() is None,
             "crypto_strategy_alive": crypto_strategy_proc.poll() is None,
+            "crypto_exit_alive": crypto_exit_proc.poll() is None,
         })
 
     return result
@@ -532,7 +595,15 @@ def admin_update_credentials(username: str, payload: dict = Body(...), admin=Dep
 # can render an empty "not set up" form rather than an error.
 @app.get("/api/admin/users/{username}/crypto-credentials")
 def admin_get_crypto_credentials(username: str, admin=Depends(auth.require_admin)):
-    creds = _read_crypto_document_py(CRYPTO_DIR / "accounts" / username)
+    user_row = next((u for u in auth.list_users() if u["username"] == username), None)
+    if user_row is None or user_row["crypto_port"] is None:
+        return {"success": True, "provisioned": False, "demo_mode": True, "api_key": "", "api_secret": ""}
+    # _managed_account_dir falls back to CRYPTO_DIR itself for chetan's legacy
+    # root crypto account (no accounts/chetan/ dir) — same resolution every
+    # other admin bot-management endpoint already uses. Gated on crypto_port
+    # being set (not just directory existence) so a genuinely new user with no
+    # crypto folder yet never falls back to reading chetan's document.py.
+    creds = _read_crypto_document_py(_managed_account_dir(CRYPTO_DIR, username))
     if creds is None:
         return {"success": True, "provisioned": False, "demo_mode": True, "api_key": "", "api_secret": ""}
     return {"success": True, "provisioned": True, **creds}
@@ -544,19 +615,25 @@ def admin_update_crypto_credentials(username: str, payload: dict = Body(...), ad
     if user_row is None:
         raise HTTPException(404, f"no such user {username!r}")
 
-    crypto_account_dir = CRYPTO_DIR / "accounts" / username
     deltaex = payload.get("deltaex")
     is_new = user_row["crypto_port"] is None
 
     if is_new:
+        crypto_account_dir = CRYPTO_DIR / "accounts" / username
         crypto_port = _next_crypto_port(user_row["webview_port"] + 1)
         crypto_account_dir.mkdir(parents=True, exist_ok=True)
         (crypto_account_dir / "auto_trade_crypto.json").write_text(json.dumps(CRYPTO_DEFAULT_CONFIG, indent=4))
         auth.set_crypto_port(username, crypto_port)
     else:
+        # crypto_port already set here, so this can only be a real managed
+        # account or chetan's legacy root — safe to fall back to CRYPTO_DIR
+        # itself (see admin_get_crypto_credentials above for why that fallback
+        # would be unsafe for a genuinely brand-new, not-yet-provisioned user).
+        crypto_account_dir = _managed_account_dir(CRYPTO_DIR, username)
         crypto_port = user_row["crypto_port"]
         _kill_port(crypto_port)
         _kill_pid(crypto_account_dir, "stetergy.py")
+        _kill_pid(crypto_account_dir, "stetergy_exit.py")
 
     (crypto_account_dir / "document.py").write_text(_crypto_document_py_content(deltaex))
 
@@ -564,12 +641,54 @@ def admin_update_crypto_credentials(username: str, payload: dict = Body(...), ad
     time.sleep(1.5)
     strategy_proc = _start_bot_process("stetergy.py", CRYPTO_DIR, crypto_account_dir)
     time.sleep(1.5)
+    # stetergy_exit.py does `from stetergy import ...`, so it needs stetergy.py's
+    # module-level setup (DeltaEx client, etc.) to finish first — same 1.5s gap
+    # as between the dashboard and strategy starts above.
+    exit_proc = _start_bot_process("stetergy_exit.py", CRYPTO_DIR, crypto_account_dir)
+    time.sleep(1.5)
 
     return {
         "success": True, "crypto_port": crypto_port,
         "crypto_dashboard_alive": dashboard_proc.poll() is None,
         "crypto_strategy_alive": strategy_proc.poll() is None,
+        "crypto_exit_alive": exit_proc.poll() is None,
     }
+
+
+# The always-on auto-trading loops only — dashboards/AI-order bots restart
+# as a side effect of saving credentials above, but these three place/exit
+# real trades on their own, so an admin needs to stop or restart just one of
+# them without touching credentials at all.
+STRATEGY_BOTS = {
+    "storesupportzone": (SMARTAPI_DIR, "storesupportzone.py"),
+    "store_exit": (SMARTAPI_DIR, "store_exit.py"),
+    "crypto_strategy": (CRYPTO_DIR, "stetergy.py"),
+    "crypto_exit": (CRYPTO_DIR, "stetergy_exit.py"),
+}
+
+
+@app.post("/api/admin/users/{username}/bots/{bot}/stop")
+def admin_stop_strategy_bot(username: str, bot: str, admin=Depends(auth.require_admin)):
+    if bot not in STRATEGY_BOTS:
+        raise HTTPException(404, "unknown bot")
+    base_dir, script_name = STRATEGY_BOTS[bot]
+    account_dir = _managed_account_dir(base_dir, username)
+    _kill_pid(account_dir, script_name)
+    return {"success": True, "alive": _pid_alive(account_dir, script_name)}
+
+
+@app.post("/api/admin/users/{username}/bots/{bot}/restart")
+def admin_restart_strategy_bot(username: str, bot: str, admin=Depends(auth.require_admin)):
+    if bot not in STRATEGY_BOTS:
+        raise HTTPException(404, "unknown bot")
+    base_dir, script_name = STRATEGY_BOTS[bot]
+    account_dir = _managed_account_dir(base_dir, username)
+    if not account_dir.exists():
+        raise HTTPException(404, f"no account directory for {username!r}")
+    _kill_pid(account_dir, script_name)
+    proc = _start_bot_process(script_name, base_dir, account_dir)
+    time.sleep(2)
+    return {"success": True, "alive": proc.poll() is None}
 
 
 @app.post("/api/admin/users/{username}/reset-password")
@@ -956,6 +1075,24 @@ def trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_use
 def trading_pending_orders(selectclient: str = None, user=Depends(get_effective_user)):
     params = {"selectclient": selectclient} if selectclient else {}
     resp = requests.get(f"{trading_api(user)}/api/pending_orders", params=params, timeout=20)
+    return resp.json()
+
+
+@app.get("/api/trading/orderbook")
+def trading_orderbook(user=Depends(get_effective_user)):
+    resp = requests.get(f"{trading_api(user)}/api/orderbook", timeout=20)
+    return resp.json()
+
+
+@app.get("/api/trading/funds")
+def trading_funds(user=Depends(get_effective_user)):
+    resp = requests.get(f"{trading_api(user)}/api/funds", timeout=20)
+    return resp.json()
+
+
+@app.get("/api/trading/failed-orders")
+def trading_failed_orders(user=Depends(get_effective_user)):
+    resp = requests.get(f"{trading_api(user)}/api/failed-orders", timeout=20)
     return resp.json()
 
 

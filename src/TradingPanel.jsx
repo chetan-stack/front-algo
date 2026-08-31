@@ -135,6 +135,14 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   // TradingView's search interleaves calls and puts regardless of the CE/PE in
   // the query text, so results must be filtered by parsed right, not just [0].
   async function viewOnChart(symbol) {
+    if (market === 'crypto') {
+      // DeltaEx option symbols (e.g. C-BTC-78200-310826) are already directly
+      // chartable — /api/ohlcv, /api/quote, and the live feed all recognize
+      // this exact format (server.py's DELTA_OPTION_RE), so no TradingView
+      // search/resolution step is needed like india's contracts below.
+      onViewOnChart({ symbol, label: symbol })
+      return
+    }
     const c = parseContract(symbol)
     if (!c) { setError(`Could not parse contract from ${symbol}`); return }
     setChartLoading(symbol)
@@ -271,7 +279,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                         <input style={input} value={edit.targetpoint} onChange={(e) => setOrderEdits({ ...orderEdits, [o.symbol]: { ...edit, targetpoint: e.target.value } })} />
                       </td>
                       <td style={td}>
-                        {market === 'india' && o.orderterm === 'hold' && (
+                        {o.orderterm === 'hold' && (
                           <button onClick={() => viewOnChart(o.symbol)} disabled={chartLoading === o.symbol} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
                             {chartLoading === o.symbol ? '…' : 'View chart'}
                           </button>

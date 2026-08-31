@@ -105,3 +105,70 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* App tab bar — wraps to multiple rows instead of overflowing/cutting off
+   tabs once there are more of them than fit one line (10+ for admin). */
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.tab-btn {
+  background: transparent;
+  color: #d1d4dc;
+  border: 1px solid #2a2e39;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.tab-btn.active {
+  background: #2a2e39;
+}
+
+.tab-bar-spacer {
+  margin-left: auto;
+}
+
+@media (max-width: 700px) {
+  .tab-bar {
+    gap: 4px;
+    padding: 6px 8px;
+  }
+  .tab-btn {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  .tab-bar-spacer {
+    margin-left: 0;
+  }
+}
+
+/* Chart toolbar (search, options/chain, interval, live, alert, drawing
+   tools, EMA, AI, buy/sell/exit) — same overflow problem as the tab bar,
+   one non-wrapping row of ~15 controls. */
+.chart-toolbar {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.chart-toolbar .search-input {
+  width: 260px;
+  max-width: 100%;
+}
+
+@media (max-width: 700px) {
+  .chart-toolbar {
+    gap: 6px;
+    padding: 8px;
+  }
+  .chart-toolbar .search-input {
+    width: 160px;
+  }
+}

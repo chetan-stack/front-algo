@@ -5,6 +5,8 @@ const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '6px 10px', width: '100%' }
 const label = { color: '#787b86', fontSize: 12, marginBottom: 4, display: 'block' }
 const field = { marginBottom: 10 }
+const smallBtn = { background: 'transparent', color: '#2962ff', border: '1px solid #2a2e39', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }
+const smallDangerBtn = { ...smallBtn, color: '#ef5350' }
 
 export default function Admin({ onActAsUser }) {
   const [users, setUsers] = useState([])
@@ -32,6 +34,7 @@ export default function Admin({ onActAsUser }) {
   const [manageMessage, setManageMessage] = useState('')
   const [cryptoBusy, setCryptoBusy] = useState(false)
   const [cryptoMessage, setCryptoMessage] = useState('')
+  const [botBusy, setBotBusy] = useState(null)
 
   async function loadUsers() {
     const res = await apiFetch('/api/admin/users')
@@ -70,7 +73,7 @@ export default function Admin({ onActAsUser }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'failed to save')
-      setCryptoMessage(`Saved (port ${data.crypto_port}). Dashboard: ${data.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy: ${data.crypto_strategy_alive ? '🟢' : '🔴'}.`)
+      setCryptoMessage(`Saved (port ${data.crypto_port}). Dashboard: ${data.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy: ${data.crypto_strategy_alive ? '🟢' : '🔴'}, exit: ${data.crypto_exit_alive ? '🟢' : '🔴'}.`)
       loadUsers()
     } catch (err) {
       setCryptoMessage(`Error: ${err.message}`)
@@ -106,6 +109,22 @@ export default function Admin({ onActAsUser }) {
       setManageMessage(`Error: ${err.message}`)
     }
     setManageBusy(false)
+  }
+
+  async function controlBot(username, bot, action) {
+    const key = `${bot}:${action}`
+    setBotBusy(key)
+    setManageMessage('')
+    try {
+      const res = await apiFetch(`/api/admin/users/${username}/bots/${bot}/${action}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || `failed to ${action} ${bot}`)
+      setManageMessage(`${bot}: ${action === 'stop' ? 'stopped' : 'restarted'} — ${data.alive ? '🟢 running' : '🔴 not running'}.`)
+      loadUsers()
+    } catch (err) {
+      setManageMessage(`Error: ${err.message}`)
+    }
+    setBotBusy(null)
   }
 
   async function resetPassword() {
@@ -268,7 +287,7 @@ export default function Admin({ onActAsUser }) {
               <> Auto-strategy: {result.storesupportzone_alive ? '🟢' : '🔴'}, auto-exit: {result.store_exit_alive ? '🟢' : '🔴'}.</>
             )}
             {result.crypto_port != null && (
-              <> Crypto (port {result.crypto_port}): dashboard {result.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy {result.crypto_strategy_alive ? '🟢' : '🔴'}.</>
+              <> Crypto (port {result.crypto_port}): dashboard {result.crypto_dashboard_alive ? '🟢' : '🔴'}, strategy {result.crypto_strategy_alive ? '🟢' : '🔴'}, exit {result.crypto_exit_alive ? '🟢' : '🔴'}.</>
             )}
             {result.telegram_alive !== undefined && (
               <> Telegram bot: {result.telegram_alive ? '🟢 running — have them message it with /start to get their chat ID' : '🔴 failed to start'}.</>
@@ -305,7 +324,7 @@ export default function Admin({ onActAsUser }) {
                     {u.storesupportzone_alive ? '🟢' : '🔴'} strat{u.errors?.storesupportzone && ' ⚠️'}&nbsp;&nbsp;{u.store_exit_alive ? '🟢' : '🔴'} exit{u.errors?.store_exit && ' ⚠️'}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>
-                    {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash{u.errors?.crypto_webview && ' ⚠️'}&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat{u.errors?.crypto_strategy && ' ⚠️'}</>}
+                    {u.crypto_port == null ? '—' : <>{u.crypto_dashboard_alive ? '🟢' : '🔴'} dash{u.errors?.crypto_webview && ' ⚠️'}&nbsp;&nbsp;{u.crypto_strategy_alive ? '🟢' : '🔴'} strat{u.errors?.crypto_strategy && ' ⚠️'}&nbsp;&nbsp;{u.crypto_exit_alive ? '🟢' : '🔴'} exit{u.errors?.crypto_exit && ' ⚠️'}</>}
                   </td>
                   <td style={{ padding: '6px 8px', color: '#787b86' }}>
                     {u.telegram_alive ? '🟢' : '🔴'}{u.errors?.telegram && ' ⚠️'}
@@ -366,6 +385,36 @@ export default function Admin({ onActAsUser }) {
                           Enable auto-strategy trading (india) on save — currently {u.storesupportzone_alive ? '🟢' : '🔴'} strategy, {u.store_exit_alive ? '🟢' : '🔴'} exit
                         </label>
                       </div>
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'storesupportzone', 'restart')} style={smallBtn}>
+                          {botBusy === 'storesupportzone:restart' ? 'Restarting…' : 'Restart auto-strategy'}
+                        </button>
+                        <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'storesupportzone', 'stop')} style={smallDangerBtn}>
+                          {botBusy === 'storesupportzone:stop' ? 'Stopping…' : 'Stop auto-strategy'}
+                        </button>
+                        <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'store_exit', 'restart')} style={smallBtn}>
+                          {botBusy === 'store_exit:restart' ? 'Restarting…' : 'Restart auto-exit'}
+                        </button>
+                        <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'store_exit', 'stop')} style={smallDangerBtn}>
+                          {botBusy === 'store_exit:stop' ? 'Stopping…' : 'Stop auto-exit'}
+                        </button>
+                      </div>
+                      {managingCrypto?.provisioned && (
+                        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                          <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'crypto_strategy', 'restart')} style={smallBtn}>
+                            {botBusy === 'crypto_strategy:restart' ? 'Restarting…' : 'Restart crypto strategy'}
+                          </button>
+                          <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'crypto_strategy', 'stop')} style={smallDangerBtn}>
+                            {botBusy === 'crypto_strategy:stop' ? 'Stopping…' : 'Stop crypto strategy'}
+                          </button>
+                          <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'crypto_exit', 'restart')} style={smallBtn}>
+                            {botBusy === 'crypto_exit:restart' ? 'Restarting…' : 'Restart crypto exit'}
+                          </button>
+                          <button disabled={!!botBusy} onClick={() => controlBot(u.username, 'crypto_exit', 'stop')} style={smallDangerBtn}>
+                            {botBusy === 'crypto_exit:stop' ? 'Stopping…' : 'Stop crypto exit'}
+                          </button>
+                        </div>
+                      )}
                       <button
                         disabled={manageBusy} onClick={saveCredentials}
                         style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 12, marginRight: 8 }}
@@ -377,6 +426,9 @@ export default function Admin({ onActAsUser }) {
                         <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #2a2e39' }}>
                           <div style={{ color: '#d1d4dc', fontSize: 13, marginBottom: 8 }}>
                             Crypto{!managingCrypto.provisioned && ' (not set up yet)'}
+                            {managingCrypto.provisioned && (
+                              <> — currently {u.crypto_strategy_alive ? '🟢' : '🔴'} strategy, {u.crypto_exit_alive ? '🟢' : '🔴'} exit</>
+                            )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                             <input
