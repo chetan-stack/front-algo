@@ -48,4 +48,40 @@ for i in $(seq 1 30); do
 done
 echo "frontend: $FRONTEND_URL"
 echo "backend:  $BACKEND_URL"
+
+# Per-user trading dashboards (webviewdataapi.py) aren't managed by the
+# backend on boot -- it only (re)starts them as a side effect of the admin
+# "add user"/"save credentials" flows -- so without this they stay down
+# after every machine/app restart until someone manually re-saves creds.
+# Read users.db directly (source of truth for ports) instead of
+# hardcoding a user list here. 8s stagger between each: AngelOne rate-limits
+# logins fired too close together (harmless for demo accounts, just slower).
+SMARTAPI_DIR=~/PycharmProjects/pythonProject/SmartApi
+SMARTAPI_VENV_PYTHON=~/PycharmProjects/pythonProject/venv/bin/python
+mkdir -p "$SMARTAPI_DIR/logs"
+sqlite3 -separator '|' users.db "SELECT username, webview_port, crypto_port, is_admin FROM users;" |
+while IFS='|' read -r username webview_port crypto_port is_admin; do
+  if [ "$is_admin" = "1" ]; then
+    account_dir="$SMARTAPI_DIR"
+    crypto_account_dir="$SMARTAPI_DIR/crypto"
+  else
+    account_dir="$SMARTAPI_DIR/accounts/$username"
+    crypto_account_dir="$SMARTAPI_DIR/crypto/accounts/$username"
+  fi
+
+  if ! lsof -tiTCP:"$webview_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    log_name=$(basename "$account_dir")
+    (cd "$account_dir" && PORT="$webview_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/webviewdataapi.py" \
+      >"$SMARTAPI_DIR/logs/${log_name}_webviewdataapi.log" 2>&1 &)
+    sleep 8
+  fi
+
+  if [ -n "$crypto_port" ] && ! lsof -tiTCP:"$crypto_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    log_name=$(basename "$crypto_account_dir")
+    (cd "$crypto_account_dir" && PORT="$crypto_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/crypto/webviewdataapi.py" \
+      >"$SMARTAPI_DIR/logs/${log_name}_webviewdataapi.log" 2>&1 &)
+    sleep 8
+  fi
+done
+
 echo "stop with: ./stop.sh"

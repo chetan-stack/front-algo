@@ -83,8 +83,14 @@ def delete_sessions_for_user(username: str):
 
 
 def authenticate(username: str, password: str):
+    # COLLATE NOCASE: a mobile keyboard auto-capitalizing the first letter, or
+    # a username stored with different casing than a user naturally types
+    # their own name, used to fail with the same "invalid username or
+    # password" 401 as a real wrong password — confirmed live for two
+    # different users (chetan's phone, Vaibhav's stored "Vaibhav" vs typed
+    # "vaibhav"). Login should never be case-sensitive on the username.
     with _connect() as conn:
-        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
     if user is None or not hmac.compare_digest(_hash(password, user["salt"]), user["password_hash"]):
         return None
     return user

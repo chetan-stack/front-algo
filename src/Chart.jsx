@@ -174,7 +174,20 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     const chart = createChart(containerRef.current, {
       layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
       grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
-      timeScale: { timeVisible: true, borderColor: '#2a2e39' },
+      // Bar timestamps are correct UTC epoch seconds, but lightweight-charts
+      // renders them in the viewing device's own timezone by default -- wrong
+      // for a viewer whose phone/laptop isn't set to IST. Force Asia/Kolkata
+      // everywhere so the chart always reads real Indian market time.
+      localization: {
+        timeFormatter: (time) =>
+          new Date(time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }),
+      },
+      timeScale: {
+        timeVisible: true,
+        borderColor: '#2a2e39',
+        tickMarkFormatter: (time) =>
+          new Date(time * 1000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+      },
       rightPriceScale: { borderColor: '#2a2e39' },
       autoSize: true,
     })

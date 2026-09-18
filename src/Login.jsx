@@ -32,6 +32,7 @@ export default function Login({ onLogin }) {
         <h2 style={{ color: '#d1d4dc', margin: '0 0 8px' }}>Sign in</h2>
         <input
           value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" autoFocus
+          autoCapitalize="none" autoCorrect="off"
           style={{ background: '#1e222d', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '8px 10px' }}
         />
         <input
