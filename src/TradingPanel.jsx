@@ -127,6 +127,22 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     else setError(d.message)
   }
 
+  async function deleteAllOrders() {
+    const symbols = data.storeorder.map((o) => o.symbol)
+    if (!confirm(`Remove all ${symbols.length} tracked orders from this list? This only affects local tracking data, not any live broker position or open position — delete only positions you've confirmed are actually closed.`)) return
+    setSavingOrder('__all__')
+    for (const symbol of symbols) {
+      const res = await apiFetch(`${prefix}/delete-order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, selectclient: data.selectclient?.[0] }),
+      })
+      const d = await res.json()
+      if (d.status !== 'success') setError(d.message)
+    }
+    setSavingOrder(null)
+    load()
+  }
+
   // Resolves via TradingView search (underlying+strike+right) rather than
   // reconstructing the exact date, since we deliberately don't decode the
   // broker's two different expiry encodings (see contracts.js). Takes the
@@ -254,7 +270,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {data.storeorder?.length > 0 && (
         <div style={box}>
-          <b>Open / recent orders</b>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <b>Open / recent orders</b>
+            <button
+              onClick={deleteAllOrders} disabled={savingOrder === '__all__'}
+              style={{ ...input, cursor: 'pointer', width: 'auto', borderColor: '#ef5350', color: '#ef5350' }}
+            >
+              {savingOrder === '__all__' ? 'Deleting…' : 'Delete all'}
+            </button>
+          </div>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
@@ -264,7 +288,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               <tbody>
                 {data.storeorder.map((o) => {
                   const edit = orderEdits[o.symbol] || { stoplosspoint: o.stoplosspoint, targetpoint: o.targetpoint }
-                  const busy = savingOrder === o.symbol
+                  const busy = savingOrder === o.symbol || savingOrder === '__all__'
                   return (
                     <tr key={o.symbol}>
                       <td style={td}>{o.symbol}</td>
