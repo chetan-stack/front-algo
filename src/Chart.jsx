@@ -499,10 +499,23 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
 
   async function exitMatchedOrder() {
     setOrderBusy(true)
-    await apiFetch(`${tradingPrefix}/exit-order`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: matchedOrder.symbol }),
-    })
+    try {
+      const res = await apiFetch(`${tradingPrefix}/exit-order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: matchedOrder.symbol }),
+      })
+      const d = await res.json()
+      // exit-order now actually closes the position synchronously (real or
+      // paper) instead of just marking it — it can genuinely fail (e.g. no
+      // live price tick available yet for a brand-new contract), and this
+      // button previously gave no feedback at all when that happened, so a
+      // failed exit looked identical to a successful one: nothing changed.
+      pushToast(d.status === 'success'
+        ? `Exited: ${matchedOrder.symbol} @ ${d.exitPrice} (P/L ${Math.round(d.profit)})`
+        : `Exit failed: ${d.message}`)
+    } catch {
+      pushToast('Exit failed: could not reach order server')
+    }
     await loadPendingOrders()
     setOrderBusy(false)
   }
