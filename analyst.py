@@ -22,6 +22,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -221,7 +222,7 @@ def check_accounts(mk, idx):
     db = sqlite3.connect(HERE / "users.db")
     users = db.execute(mk["users_sql"]).fetchall()
     running = running_dirs(mk)
-    rows = []
+    rows, findings = [], []
     for user, is_admin in users:
         d = mk["dir"] if is_admin else mk["dir"] / "accounts" / user
         try:
@@ -269,26 +270,139 @@ def check_accounts(mk, idx):
                             + ("" if auto else " - auto entry is OFF, no entry would be taken"))
         if auto and enabled and labels and all(l == "RANGE" for l in labels):
             recs.append("REVIEW: every enabled symbol is range-bound - consider stopping auto strategy until a breakout")
-        for o in held:
-            n = mk["under"](o["symbol"])
-            a = idx.get(n)
-            ol = a and a.get("ol")
-            if not ol:
-                continue
-            pl = f"{o['symbol']} ({o.get('profit') or 0:+,.0f})"
-            if mk["is_call"](o["symbol"]) and ol.get("dR") is not None and ol["dR"] < 0.6:
-                recs.append(f"REVIEW: holding {pl} into strong resistance {ol['R']['price']:,.0f}")
-            if mk["is_put"](o["symbol"]) and ol.get("dS") is not None and ol["dS"] < 0.6:
-                recs.append(f"REVIEW: holding {pl} into strong support {ol['S']['price']:,.0f}")
-            if (mk["is_call"](o["symbol"]) and a["state"] == "TRENDING_DOWN") or (mk["is_put"](o["symbol"]) and a["state"] == "TRENDING_UP"):
-                recs.append(f"REVIEW: holding {pl} against a {a['state'].lower().replace('_', ' ')} {n}")
+        for f in check_orders(mk, idx, user, d, cfg, have, set(enabled), datetime.now(IST).date()):
+            findings.append({**f, "user": user})
+            recs.append(f"{f['kind'].replace('_', '-')}: {f['sym']} - {f['brief']}")
         rows.append((user, status, recs))
-    return rows
+    return rows, findings
+
+
+# ---------- open orders: wrong placement / exit needed / trail ----------
+
+def option_expiry(sym):
+    """Expiry date parsed from the contract symbol, or None if the format isn't recognised."""
+    try:
+        m = re.match(r"^(?:BANKNIFTY|NIFTY)(\d{2}[A-Z]{3}\d{2})\d{5}(?:CE|PE)$", sym)        # NIFTY22SEP2623300CE
+        if m:
+            return datetime.strptime(m.group(1), "%d%b%y").date()
+        m = re.match(r"^SENSEX(\d{2})(\d)(\d{2})\d{5}(?:CE|PE)$", sym)                        # SENSEX2691774400CE = yy m dd
+        if m:
+            return datetime(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        m = re.match(r"^[CP]-[A-Z]+-\d+-(\d{6})$", sym)                                        # P-BTC-80000-270826 = ddmmyy
+        if m:
+            return datetime.strptime(m.group(1), "%d%m%y").date()
+    except ValueError:
+        pass
+    return None
+
+
+def crypto_mark(sym):
+    """Live mark price of a DeltaEx option (None once the contract is expired or on any error)."""
+    try:
+        r = json.load(urllib.request.urlopen(f"https://cdn.india.deltaex.org/v2/tickers/{sym}", timeout=8)).get("result")
+        return float(r["mark_price"]) if r and "mark_price" in r else None
+    except Exception:
+        return None
+
+
+def check_orders(mk, idx, user, d, cfg, have, enabled, today):
+    """Every open position in one account -> [{sym, kind, reason, text, brief}].
+    kind: ORDER_WRONG (should not have been placed / contradicts config or market),
+          ORDER_EXIT (should be closed or is overdue), ORDER_TRAIL (in profit, tighten the stop / extend target).
+    'brief' has no live numbers, so the accounts block only reprints when something real changes."""
+    try:
+        book = sqlite3.connect(d / "database.db")
+        pos = book.execute(f"SELECT symbol, ltp, lotsize, createddate FROM {mk['book']} "
+                           "WHERE lotsize > 0 AND (profit IS NULL OR profit = 0)").fetchall()
+    except Exception:
+        return []
+    held = {o["symbol"]: o for o in cfg.get("storeorder") or [] if o.get("orderterm") == "hold"}
+    out, seen, sides = [], {}, {}
+    now = datetime.now(IST).replace(tzinfo=None)
+
+    def add(sym, kind, reason, text, brief=None):
+        out.append({"sym": sym, "kind": kind, "reason": reason, "text": text, "brief": brief or text})
+
+    for sym, entry, qty, created in pos:
+        n, call = mk["under"](sym), mk["is_call"](sym)
+        a = idx.get(n)
+        ol = (a or {}).get("ol") or {}
+        seen[sym] = seen.get(sym, 0) + 1
+        sides.setdefault(n, set()).add(call)
+        created_s = str(created)[:10]
+        exp = option_expiry(sym)
+        if exp and exp < today:
+            add(sym, "ORDER_EXIT", "expired", f"contract expired {exp:%d %b} but the position is still open in the order book (since {created_s}) - a stale record with no live price; close/clear it")
+            continue
+        if exp and (exp - today).days <= 1:
+            add(sym, "ORDER_EXIT", "expiring", f"expires {exp:%d %b}: near-expiry options lose value fast - consider exiting")
+        if mk["key"] == "india" and created_s < f"{today}":
+            add(sym, "ORDER_EXIT", "overnight", f"open since {created_s} (before today) - this strategy trades intraday; consider exiting")
+        if "exit" not in have:
+            add(sym, "ORDER_EXIT", "noexit", f"no auto-exit process is running - nothing will close it at target or stop")
+        # live P&L in option points: crypto from the exchange ticker; India only from the dashboard order while the exit bot keeps it fresh
+        o = held.get(sym)
+        pts = None
+        if mk["key"] == "crypto":
+            mark = crypto_mark(sym)
+            pts = None if mark is None else mark - float(entry)
+        elif o and "exit" in have:
+            pts = (o.get("profit") or 0) / qty
+        try:
+            target = float((o or {}).get("targetpoint", cfg.get("target_points")))
+            stop = float((o or {}).get("stoplosspoint", cfg.get("loss_points")))
+        except (TypeError, ValueError):
+            target = stop = 0
+        against = a and ((call and a["state"] == "TRENDING_DOWN") or (not call and a["state"] == "TRENDING_UP"))
+        if pts is not None and stop > 0 and target > 0:
+            if pts <= -stop:
+                add(sym, "ORDER_EXIT", "stop", f"at/below its stop ({pts:+.1f} pts vs -{stop:g}) but still open", "at/below its stop but still open")
+            elif pts >= target:
+                add(sym, "ORDER_EXIT", "target", f"reached its target ({pts:+.1f} pts vs +{target:g}) but still open", "reached its target but still open")
+            elif pts >= 0.5 * target and not against:
+                lv = ol.get("R") if call else ol.get("S")
+                dist = ol.get("dR") if call else ol.get("dS")
+                room = ""
+                if lv and dist is not None:
+                    kind = "resistance" if call else "support"
+                    room = (f"; next strong {kind} {lv['price']:,.0f} is {dist:.1f} ATR away - room to extend the target there" if dist >= 1
+                            else f"; strong {kind} {lv['price']:,.0f} is only {dist:.1f} ATR away - book profit near it")
+                add(sym, "ORDER_TRAIL", "trail", f"{pts:+.1f} pts, {pts / target:.0%} of the way to its +{target:g} target: move the stop to entry (break-even) to lock it in{room}",
+                    "in profit past half its target: move the stop to entry to lock it in")
+        if against:
+            add(sym, "ORDER_WRONG", "trend", f"{'call' if call else 'put'} held against a {a['state'].lower().replace('_', ' ')} {n}")
+        lv, dist = (ol.get("R"), ol.get("dR")) if call else (ol.get("S"), ol.get("dS"))
+        if lv and dist is not None and dist < 0.6:
+            kind = "resistance" if call else "support"
+            add(sym, "ORDER_EXIT", "level", f"{n} is {dist:.1f} ATR from strong {kind} {lv['price']:,.0f} - the position is running into it; book profit or tighten the stop",
+                f"running into strong {kind} {lv['price']:,.0f}")
+        try:
+            age_min = (now - datetime.fromisoformat(str(created))).total_seconds() / 60
+        except ValueError:
+            age_min = 1e9
+        if age_min <= 30 and ol.get("label") == "RANGE":
+            add(sym, "ORDER_WRONG", "range", f"opened {age_min:.0f} min ago in a range-bound {n} (no trend) - this strategy needs one", "opened in a range-bound market (no trend)")
+        if n and n not in enabled:
+            add(sym, "ORDER_WRONG", "disabled", f"{n} is not enabled in this account's settings")
+        side = cfg.get("buy_or_sell_side")
+        if mk["key"] == "india" and cfg.get("check_all_level") and ((side == "CALL" and not call) or (side == "PUT" and call)):
+            add(sym, "ORDER_WRONG", "side", f"account is set to {side} only, but this is a {'call' if call else 'put'}")
+    for sym, k in seen.items():
+        if k > 1:
+            add(sym, "ORDER_WRONG", "duplicate", f"{k} open positions on the same contract")
+    for n, s_ in sides.items():
+        if len(s_) == 2:
+            for sym, *_ in pos:
+                if mk["under"](sym) == n:
+                    add(sym, "ORDER_WRONG", "both", f"both a call and a put on {n} are open at once")
+    return out
 
 
 # ---------- alerts + logs ----------
 
 def notify(msg):
+    if os.environ.get("ANALYST_QUIET"):  # tests: no desktop popups
+        return
     subprocess.run(["osascript", "-e", f'display notification "{msg[:180]}" with title "Market analyst"'], capture_output=True)
 
 
@@ -301,10 +415,10 @@ def alerts_lock():
         yield
 
 
-def emit(mk, name, kind, text, lines):
+def emit(mk, name, kind, text, lines, force=False):
     """One alert: appended to alerts.jsonl (the app's Alerts tab), the market report, and a desktop notification."""
     key = (mk["key"], name, kind)
-    if time.time() - _alert_seen.get(key, 0) < ALERT_COOLDOWN:
+    if not force and time.time() - _alert_seen.get(key, 0) < ALERT_COOLDOWN:
         return
     _alert_seen[key] = time.time()
     rec = {"ts": f"{datetime.now(IST):%Y-%m-%d %H:%M:%S}", "market": mk["key"], "symbol": name, "kind": kind, "text": text}
@@ -397,7 +511,15 @@ def cycle(mk):
         st["last"][name] = cur
     flagged = set()
     try:
-        rows = check_accounts(mk, idx)
+        rows, findings = check_accounts(mk, idx)
+        cur = {}
+        for f in findings:
+            cur.setdefault((f["user"], f["sym"], f["kind"]), []).append(f)
+        for key_, fs in cur.items():  # alert once per new reason for an order; a cleared reason can alert again later
+            new_ = [f for f in fs if f["reason"] not in st["orders"].get(key_, set())]
+            if new_:
+                emit(mk, f"{key_[0]}: {key_[1]}", key_[2], "; ".join(f["text"] for f in new_), lines, force=True)
+        st["orders"] = {k_: {f["reason"] for f in fs} for k_, fs in cur.items()}
         key = [(u, s.split(" | open")[0], r) for u, s, r in rows]
         flagged = {f"{u}: {x[:60]}" for u, _, r in rows for x in r if x.split(":")[0] in ACCOUNT_ALERT_WORDS}
         if key != st["acct"]:
@@ -425,10 +547,10 @@ def in_india_hours(now):
     return now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30)
 
 
-def market(key, label, symbols, fetch, log, hours, dir_, cfg, flag, required, scripts, users_sql, under, is_call, is_put):
+def market(key, label, symbols, fetch, log, hours, dir_, cfg, flag, required, scripts, users_sql, under, is_call, is_put, book):
     return dict(key=key, label=label, symbols=symbols, fetch=fetch, log=log, hours=hours, dir=dir_, cfg=cfg, flag=flag,
-                required=required, scripts=scripts, users_sql=users_sql, under=under, is_call=is_call, is_put=is_put,
-                st={"acct": None, "alerts": set(), "day": None, "last": {}, "open": False})
+                required=required, scripts=scripts, users_sql=users_sql, under=under, is_call=is_call, is_put=is_put, book=book,
+                st={"acct": None, "alerts": set(), "day": None, "last": {}, "open": False, "orders": {}})
 
 
 MARKETS = {
@@ -438,7 +560,7 @@ MARKETS = {
         ("set_otm", "buy_or_sell_side", "buy_or_sell", "lotsize", "target_points", "loss_points", "stop_loss"),
         ("storesupportzone.py", "store_exit.py"), "SELECT username, is_admin FROM users ORDER BY is_admin DESC, username",
         lambda s: next((n for n in ("BANKNIFTY", "NIFTY", "SENSEX") if s.startswith(n)), None),
-        lambda s: s.endswith("CE"), lambda s: s.endswith("PE")),
+        lambda s: s.endswith("CE"), lambda s: s.endswith("PE"), "ordertoken"),
     "crypto": market(
         "crypto", "Crypto", {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}, fetch_binance,
         OUT / "crypto_analysis_log.txt", lambda now: True, SMARTAPI / "crypto", "auto_trade_crypto.json", lambda n: n + "USD",
@@ -446,7 +568,7 @@ MARKETS = {
         ("stetergy.py", "stetergy_exit.py"),
         "SELECT username, is_admin FROM users WHERE crypto_port IS NOT NULL ORDER BY is_admin DESC, username",
         lambda s: s.split("-")[1] if s.count("-") >= 2 else None,
-        lambda s: s.startswith("C-"), lambda s: s.startswith("P-")),
+        lambda s: s.startswith("C-"), lambda s: s.startswith("P-"), "cryptoorderbook"),
 }
 
 
@@ -486,6 +608,29 @@ def selftest():
             f.write(json.dumps({"ts": "2020-01-01 00:00:00", "market": "india", "symbol": "X", "kind": "K", "text": "t"}) + "\n")
         prune_alerts(datetime.now(IST))
         assert len(ALERTS.read_text().splitlines()) == 1
+    from datetime import date
+    assert option_expiry("NIFTY22SEP2623300CE") == date(2026, 9, 22)
+    assert option_expiry("SENSEX2691774400CE") == date(2026, 9, 17)
+    assert option_expiry("P-BTC-80000-270826") == date(2026, 8, 27)
+    assert option_expiry("SENSEX26SEP74800CE") is None
+    with tempfile.TemporaryDirectory() as d:
+        book = sqlite3.connect(Path(d) / "database.db")
+        book.execute("CREATE TABLE ordertoken (symbol, ltp, lotsize, profit, createddate)")
+        book.executemany("INSERT INTO ordertoken VALUES (?,?,?,?,?)", [
+            ("NIFTY15SEP2623300CE", 100, 650, 0, "2026-09-18 14:22:33"),   # contract already expired
+            ("NIFTY30DEC2623400CE", 100, 650, 0, "2026-09-21 10:00:00")])  # live call, +6.2 pts of a +10 target
+        book.commit()
+        today = date(2026, 9, 21)
+        cfg = {"target_points": "10", "loss_points": "10", "storeorder": [
+            {"symbol": "NIFTY30DEC2623400CE", "orderterm": "hold", "profit": 4000, "targetpoint": "10", "stoplosspoint": "10"}]}
+        idx = {"NIFTY": {"state": "TRENDING_UP", "ol": {"label": "TREND", "R": None, "S": None, "dR": None, "dS": None}}}
+        got = {(f["sym"], f["reason"]) for f in check_orders(MARKETS["india"], idx, "u", Path(d), cfg, {"exit"}, {"NIFTY"}, today)}
+        assert ("NIFTY15SEP2623300CE", "expired") in got and ("NIFTY30DEC2623400CE", "trail") in got, got
+        assert not any(r in ("trend", "noexit") for s_, r in got if s_ == "NIFTY30DEC2623400CE"), got
+        idx["NIFTY"]["state"] = "TRENDING_DOWN"   # same call, now against the trend, and the exit bot is down
+        got = {(f["sym"], f["reason"]) for f in check_orders(MARKETS["india"], idx, "u", Path(d), cfg, set(), {"NIFTY"}, today)}
+        assert ("NIFTY30DEC2623400CE", "trend") in got and ("NIFTY30DEC2623400CE", "noexit") in got, got
+        assert ("NIFTY30DEC2623400CE", "disabled") not in got and check_orders(MARKETS["india"], idx, "u", Path(d), cfg, set(), set(), today)
     print("selftest ok")
 
 

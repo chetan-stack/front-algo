@@ -240,6 +240,14 @@ each Report tab its own; `GET /api/admin/analyst/{market}`, `POST /api/admin/ana
 find them by process pattern, not a pid file, so restart can never leave two copies. Read-only, so stopping
 one only stops that market's new reports/alerts. They share alerts.jsonl under a file lock (alerts.lock).
 Run without `--market` and it just prints usage (no combined mode).
+Order checks (`check_orders`): every open position (token book: india `ordertoken`, crypto `cryptoorderbook`,
+open = lotsize>0 and profit 0) is checked each cycle -> alerts `ORDER_WRONG` (against the trend / range-bound
+entry / index not enabled / contradicts buy_or_sell_side / duplicate / call+put both open), `ORDER_EXIT`
+(expired contract, expiring <=1 day, held overnight (India), no exit bot running, at stop/target but still open,
+running into a strong level) and `ORDER_TRAIL` (past half its target and not against the trend). One alert per
+NEW reason per order. Live P&L: crypto from the DeltaEx ticker `mark_price` (null result = expired contract);
+India only from the dashboard order's `profit` while store_exit is running (otherwise it is stale, so no P&L rules).
+India order alerts fire only in market hours (that process sleeps outside them).
 
 ## Status as of 2026-09-12
 

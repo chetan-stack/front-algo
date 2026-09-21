@@ -3,8 +3,8 @@ import { apiFetch } from './api'
 import AnalystControl from './AnalystControl'
 
 const COLORS = [
-  [/ATTENTION|FIX:|CYCLE FAILED|data unavailable/, '#ef5350'],
-  [/ALERT \[|START:|BREAKOUT_UP|BREAKDOWN/, '#26a69a'],
+  [/ATTENTION|FIX:|CYCLE FAILED|data unavailable|ORDER_WRONG|ORDER-WRONG|ORDER_EXIT|ORDER-EXIT/, '#ef5350'],
+  [/ALERT \[|START:|BREAKOUT_UP|BREAKDOWN|ORDER_TRAIL|ORDER-TRAIL/, '#26a69a'],
   [/REVIEW|PAUSE:|PREPARE:|COILED|BIG MOVE|DELAYED/, '#ffb74d'],
   [/WATCH|NOTE|NO_SIGNAL/, '#4fc3f7'],
 ]

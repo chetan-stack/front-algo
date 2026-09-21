@@ -7,6 +7,9 @@ const KIND = {
   TREND_COMING: { label: 'Trend coming', color: '#4fc3f7' },
   NEAR_MOVE: { label: 'Near a move', color: '#ffb74d' },
   BIG_MOVE: { label: 'Big move', color: '#ef5350' },
+  ORDER_WRONG: { label: 'Wrong order', color: '#ef5350' },
+  ORDER_EXIT: { label: 'Exit needed', color: '#ff7043' },
+  ORDER_TRAIL: { label: 'Trail target', color: '#26a69a' },
 }
 
 // Admin-only: the backend route enforces it, this tab is just hidden from everyone else.
@@ -59,7 +62,7 @@ export default function Alerts({ onSeen }) {
           <AnalystControl market="crypto" />
         </span>
         <span style={{ width: '100%', fontSize: 12, color: '#787b86' }}>
-          Trending · trend coming · near a move · big move — stored 7 days · refreshes every 30s
+          Market: trending · trend coming · near a move · big move &nbsp;|&nbsp; Orders: wrong order · exit needed · trail target — stored 7 days · refreshes every 30s
         </span>
       </div>
       <div style={{ flex: 1, overflow: 'auto', background: '#0c0e15', padding: 12, fontSize: 13 }}>
