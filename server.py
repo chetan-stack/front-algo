@@ -7,8 +7,10 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 import certifi
+import pandas as pd
 import requests
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
@@ -764,7 +766,54 @@ def epoch(ts):
     return int(ts.to_pydatetime().timestamp())
 
 
+# AngelOne's own real-time data for anything the shared broker session can
+# resolve (indices, their options, NSE/BSE equities) — instead of
+# TvDatafeed's anonymous no-login feed, confirmed via /api/quote to run
+# ~15 minutes behind wall-clock time (the SEBI-mandated delay for
+# unlicensed real-time redistribution). Reuses live_feed.resolve() (already
+# used for live tick websockets) to turn any TradingView-format symbol
+# string into Angel One's own (exchange_type, token), then the same
+# get_historical_candles() the bots' demo-account data already goes
+# through. Only "240" (4-hour) has no native AngelOne interval and no
+# resampling layer here — that one resolution still falls back to
+# TvDatafeed below, everything else prefers this.
+ANGEL_INTERVAL = {"1": "ONE_MINUTE", "5": "FIVE_MINUTE", "15": "FIFTEEN_MINUTE", "60": "ONE_HOUR", "D": "ONE_DAY"}
+ANGEL_MINUTES = {"1": 1, "5": 5, "15": 15, "60": 60, "D": 1440}
+_EXCHANGE_TYPE_REV = {v: k for k, v in {**live_feed.EXCHANGE_TYPE, **live_feed.EXCHANGE_TYPE_FO}.items()}
+
+
+def _fetch_angel(symbol: str, resolution: str, n_bars: int):
+    angel_interval = ANGEL_INTERVAL.get(resolution)
+    if angel_interval is None:
+        return None
+    resolved = live_feed.resolve(symbol)
+    if resolved is None:
+        return None
+    exchange_type, token = resolved
+    exch_seg = _EXCHANGE_TYPE_REV.get(exchange_type)
+    if exch_seg is None:
+        return None
+    to_date = datetime.now()
+    from_date = to_date - timedelta(minutes=ANGEL_MINUTES[resolution] * n_bars * 2)
+    try:
+        data = live_feed.get_historical_candles(
+            exch_seg, token, angel_interval,
+            from_date.strftime("%Y-%m-%d %H:%M"), to_date.strftime("%Y-%m-%d %H:%M"),
+        )
+    except Exception:
+        return None
+    if not data:
+        return None
+    df = pd.DataFrame(data, columns=["datetime", "open", "high", "low", "close", "volume"]).tail(n_bars)
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df.set_index("datetime", inplace=True)
+    return df
+
+
 def fetch(symbol: str, resolution: str, n_bars: int):
+    angel_df = _fetch_angel(symbol, resolution, n_bars)
+    if angel_df is not None and not angel_df.empty:
+        return angel_df
     interval = RESOLUTIONS.get(resolution)
     if interval is None:
         raise HTTPException(400, f"unsupported resolution '{resolution}'")

@@ -54,8 +54,12 @@ echo "backend:  $BACKEND_URL"
 # "add user"/"save credentials" flows -- so without this they stay down
 # after every machine/app restart until someone manually re-saves creds.
 # Read users.db directly (source of truth for ports) instead of
-# hardcoding a user list here. 8s stagger between each: AngelOne rate-limits
-# logins fired too close together (harmless for demo accounts, just slower).
+# hardcoding a user list here. Only a REAL account's india dashboard needs
+# the 8s AngelOne-rate-limit stagger (an actual broker login); a demo
+# account has no login step at all, so it gets a short flat sleep instead --
+# flat 8s for everyone used to make a 7-user restart take 90+ seconds for
+# no reason, almost all of it sleeping on accounts that were never going to
+# hit a real rate limit in the first place.
 SMARTAPI_DIR=~/PycharmProjects/pythonProject/SmartApi
 SMARTAPI_VENV_PYTHON=~/PycharmProjects/pythonProject/venv/bin/python
 mkdir -p "$SMARTAPI_DIR/logs"
@@ -73,14 +77,18 @@ while IFS='|' read -r username webview_port crypto_port is_admin; do
     log_name=$(basename "$account_dir")
     (cd "$account_dir" && PORT="$webview_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/webviewdataapi.py" \
       >"$SMARTAPI_DIR/logs/${log_name}_webviewdataapi.log" 2>&1 &)
-    sleep 8
+    if grep -q "demo_mode = True" "$account_dir/document.py" 2>/dev/null; then
+      sleep 1.5
+    else
+      sleep 8
+    fi
   fi
 
   if [ -n "$crypto_port" ] && ! lsof -tiTCP:"$crypto_port" -sTCP:LISTEN >/dev/null 2>&1; then
     log_name=$(basename "$crypto_account_dir")
     (cd "$crypto_account_dir" && PORT="$crypto_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/crypto/webviewdataapi.py" \
       >"$SMARTAPI_DIR/logs/${log_name}_webviewdataapi.log" 2>&1 &)
-    sleep 8
+    sleep 1.5  # DeltaEx has no login/rate-limit step, unlike AngelOne -- no need to stagger
   fi
 done
 
