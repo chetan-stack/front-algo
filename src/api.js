@@ -1,6 +1,5 @@
-// Single source of truth for the backend origin — start.sh patches this line's
-// URL on every run (cloudflare quick tunnels get a new random URL each time).
-export const API = 'https://wines-affair-spy-drives.trycloudflare.com'
+// Single source of truth for the backend origin (named cloudflare tunnel, stable).
+export const API = 'https://backend.tradesmartai.in'
 
 // Central fetch wrapper so every call carries the logged-in user's token
 // without each component managing auth headers itself. A 401 means the

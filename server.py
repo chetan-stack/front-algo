@@ -33,7 +33,7 @@ auth.init_db()
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["https://app.tradesmartai.in", "http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.post("/api/auth/login")

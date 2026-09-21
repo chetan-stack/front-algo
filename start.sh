@@ -6,7 +6,11 @@ mkdir -p logs
 # kill any previous run so the backend port is free before we bind it again
 if [ -f .runpids ]; then
   kill $(cat .runpids) 2>/dev/null
-  sleep 1
+  # wait for the old frontend/backend to release their ports; otherwise vite silently drifts to 5174
+  for i in $(seq 1 15); do
+    lsof -tiTCP:5173,4001 -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 1
+  done
 fi
 
 nohup npm run dev >logs/frontend.log 2>&1 &
@@ -17,37 +21,13 @@ BACKEND_PID=$!
 
 sleep 2 # let dev servers claim their ports before tunneling them
 
-nohup cloudflared tunnel --url http://localhost:5173 >logs/tunnel-frontend.log 2>&1 &
-TUNNEL_FRONTEND_PID=$!
+# one named tunnel (config in ~/.cloudflared/config.yml): app.tradesmartai.in -> 5173, backend.tradesmartai.in -> 4001
+nohup cloudflared tunnel run tradesmartai >logs/tunnel.log 2>&1 &
+TUNNEL_PID=$!
 
-nohup cloudflared tunnel --url http://localhost:4001 >logs/tunnel-backend.log 2>&1 &
-TUNNEL_BACKEND_PID=$!
-
-echo "$FRONTEND_PID $BACKEND_PID $TUNNEL_FRONTEND_PID $TUNNEL_BACKEND_PID" >.runpids
-
-# wait for the backend's quick-tunnel URL and patch it into Chart.jsx (it's random every run)
-BACKEND_URL=""
-for i in $(seq 1 30); do
-  BACKEND_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' logs/tunnel-backend.log | head -1)
-  [ -n "$BACKEND_URL" ] && break
-  sleep 1
-done
-
-if [ -n "$BACKEND_URL" ]; then
-  sed -i '' "s|^export const API = '.*'|export const API = '$BACKEND_URL'|" src/api.js
-  echo "patched src/api.js API -> $BACKEND_URL"
-else
-  echo "WARNING: backend tunnel URL didn't show up in time, src/api.js not patched"
-fi
-
-FRONTEND_URL=""
-for i in $(seq 1 30); do
-  FRONTEND_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' logs/tunnel-frontend.log | head -1)
-  [ -n "$FRONTEND_URL" ] && break
-  sleep 1
-done
-echo "frontend: $FRONTEND_URL"
-echo "backend:  $BACKEND_URL"
+echo "$FRONTEND_PID $BACKEND_PID $TUNNEL_PID" >.runpids
+echo "frontend: https://app.tradesmartai.in"
+echo "backend:  https://backend.tradesmartai.in"
 
 # Per-user trading dashboards (webviewdataapi.py) aren't managed by the
 # backend on boot -- it only (re)starts them as a side effect of the admin
