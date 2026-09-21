@@ -11,10 +11,15 @@ All in ~/tradingview-analysis/, shown to admins only in the app.
 
 It NEVER starts, stops or edits anything. Recommendations only.
 
-    python3 analyst.py            # run forever
-    python3 analyst.py --once     # one cycle per market, print to stdout too
+    python3 analyst.py --market india    # run forever, India only (sleeps outside Mon-Fri 09:15-15:30 IST)
+    python3 analyst.py --market crypto   # run forever, crypto only (24/7)
+    python3 analyst.py --once [--market india|crypto]   # one cycle, print to stdout too
     python3 analyst.py --selftest
+
+India and crypto are two separate processes on purpose, so each can be started/stopped on its own.
 """
+import contextlib
+import fcntl
 import json
 import os
 import sqlite3
@@ -287,6 +292,15 @@ def notify(msg):
     subprocess.run(["osascript", "-e", f'display notification "{msg[:180]}" with title "Market analyst"'], capture_output=True)
 
 
+@contextlib.contextmanager
+def alerts_lock():
+    """The India and crypto processes share alerts.jsonl: serialise appends against the daily prune-rewrite."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    with open(OUT / "alerts.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
+
 def emit(mk, name, kind, text, lines):
     """One alert: appended to alerts.jsonl (the app's Alerts tab), the market report, and a desktop notification."""
     key = (mk["key"], name, kind)
@@ -294,24 +308,25 @@ def emit(mk, name, kind, text, lines):
         return
     _alert_seen[key] = time.time()
     rec = {"ts": f"{datetime.now(IST):%Y-%m-%d %H:%M:%S}", "market": mk["key"], "symbol": name, "kind": kind, "text": text}
-    ALERTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(ALERTS, "a") as f:
-        f.write(json.dumps(rec) + "\n")
+    with alerts_lock():
+        with open(ALERTS, "a") as f:
+            f.write(json.dumps(rec) + "\n")
     lines.append(f"ALERT [{kind}] {name}: {text}")
     notify(f"{mk['label']} {name}: {kind.replace('_', ' ').lower()} - {text}")
 
 
 def prune_alerts(now):
     """Alerts are kept ALERT_KEEP_DAYS days so you can look back at them; older ones are deleted."""
-    if not ALERTS.exists():
-        return
-    cutoff = f"{now - timedelta(days=ALERT_KEEP_DAYS):%Y-%m-%d %H:%M:%S}"
-    rows = [l for l in ALERTS.read_text().splitlines() if l.strip()]
-    kept = [l for l in rows if json.loads(l).get("ts", "") >= cutoff]
-    if len(kept) != len(rows):
-        tmp = ALERTS.with_suffix(".tmp")
-        tmp.write_text("".join(l + "\n" for l in kept))
-        os.replace(tmp, ALERTS)
+    with alerts_lock():
+        if not ALERTS.exists():
+            return
+        cutoff = f"{now - timedelta(days=ALERT_KEEP_DAYS):%Y-%m-%d %H:%M:%S}"
+        rows = [l for l in ALERTS.read_text().splitlines() if l.strip()]
+        kept = [l for l in rows if json.loads(l).get("ts", "") >= cutoff]
+        if len(kept) != len(rows):
+            tmp = ALERTS.with_suffix(".tmp")
+            tmp.write_text("".join(l + "\n" for l in kept))
+            os.replace(tmp, ALERTS)
 
 
 def prune_log(path, today):
@@ -474,26 +489,33 @@ def selftest():
     print("selftest ok")
 
 
+def arg(flag):
+    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv and sys.argv.index(flag) + 1 < len(sys.argv) else None
+
+
 if __name__ == "__main__":
+    key = arg("--market")
     if "--selftest" in sys.argv:
         selftest()
     elif "--once" in sys.argv:
-        for m in MARKETS.values():
+        for m in ([MARKETS[key]] if key in MARKETS else MARKETS.values()):
             print(cycle(m))
+    elif key not in MARKETS:
+        sys.exit("usage: analyst.py --market india|crypto   (or --once [--market ...] / --selftest)")
     else:
-        while True:
+        m = MARKETS[key]
+        while True:  # one market per process: start/stop each independently, each has its own trading hours
             now, t0 = datetime.now(IST), time.time()
-            for m in MARKETS.values():
-                if m["hours"](now):
-                    try:
-                        cycle(m)
-                    except Exception as e:  # never die: one bad cycle must not end the day's monitoring
-                        m["log"].parent.mkdir(parents=True, exist_ok=True)
-                        with open(m["log"], "a") as f:
-                            f.write(f"=== {now:%Y-%m-%d %H:%M} IST ===\nCYCLE FAILED: {type(e).__name__}: {e}\n\n")
-                    m["st"]["open"] = True
-                elif m["st"]["open"]:
+            if m["hours"](now):
+                try:
+                    cycle(m)
+                except Exception as e:  # never die: one bad cycle must not end the day's monitoring
+                    m["log"].parent.mkdir(parents=True, exist_ok=True)
                     with open(m["log"], "a") as f:
-                        f.write(f"=== {now:%Y-%m-%d %H:%M} IST ===\nMarket closed - monitoring paused until next open.\n\n")
-                    m["st"]["open"] = False
+                        f.write(f"=== {now:%Y-%m-%d %H:%M} IST ===\nCYCLE FAILED: {type(e).__name__}: {e}\n\n")
+                m["st"]["open"] = True
+            elif m["st"]["open"]:
+                with open(m["log"], "a") as f:
+                    f.write(f"=== {now:%Y-%m-%d %H:%M} IST ===\nMarket closed - monitoring paused until next open.\n\n")
+                m["st"]["open"] = False
             time.sleep(max(5, EVERY - (time.time() - t0)))

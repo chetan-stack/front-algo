@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from './api'
+import AnalystControl from './AnalystControl'
 
 const COLORS = [
   [/ATTENTION|FIX:|CYCLE FAILED|data unavailable/, '#ef5350'],
@@ -47,7 +48,8 @@ export default function Analysis({ market = 'india' }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#d1d4dc' }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: 12, borderBottom: '1px solid #2a2e39', fontSize: 12, color: '#787b86' }}>
         <span>{market === 'crypto' ? 'Crypto' : 'India'} market &amp; auto-strategy report — today only, read-only, recommendations only{path ? ` · ${path}` : ''}</span>
-        <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ marginLeft: 'auto' }}><AnalystControl market={market} /></span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
           Auto-refresh (30s)
         </label>

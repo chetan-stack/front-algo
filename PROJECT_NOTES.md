@@ -234,6 +234,12 @@ at the first cycle of a new day); `alerts.jsonl` — trending / trend-coming / n
 alerts for both markets, kept 7 days, one per kind per symbol per 15 min, fired on a state CHANGE.
 App (admin-only): **Alerts** tab (unread badge, polled every 30s), **India Report**, **Crypto Report**;
 routes `/api/admin/analysis?market=india|crypto` and `/api/admin/alerts`.
+India and crypto are TWO separate processes (`analyst.py --market india|crypto`, different trading
+hours), started by start.sh, one copy each. Start/Stop/Restart buttons per market (Alerts tab shows both,
+each Report tab its own; `GET /api/admin/analyst/{market}`, `POST /api/admin/analyst/{market}/{start|stop|restart}`)
+find them by process pattern, not a pid file, so restart can never leave two copies. Read-only, so stopping
+one only stops that market's new reports/alerts. They share alerts.jsonl under a file lock (alerts.lock).
+Run without `--market` and it just prints usage (no combined mode).
 
 ## Status as of 2026-09-12
 

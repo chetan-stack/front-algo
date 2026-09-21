@@ -2,8 +2,10 @@ import asyncio
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -446,6 +448,54 @@ def admin_analysis(market: str = "india", admin=Depends(auth.require_admin)):
         raise HTTPException(404, "unknown market")
     path = ANALYSIS_DIR / name
     return {"success": True, "path": str(path), "lines": _tail_lines(path, 3000) or []}
+
+
+# Start / stop / restart the read-only analysis job from the app -- one process PER
+# MARKET (analyst.py --market india|crypto) so each runs on its own schedule. It never
+# touches a bot or config, so this only controls whether new analysis and alerts get
+# written. Found by process pattern, not a pid file, so a copy started from start.sh or
+# a terminal is controlled too, and restart can never leave two copies of a market.
+ANALYST_MARKETS = ("india", "crypto")
+
+
+def _analyst_pids(market):
+    # [Pp]: macOS names the venv's interpreter "Python" (capital P) in the process list, "python3" for the
+    # system one -- a lowercase-only pattern made started copies invisible (stop did nothing, start duplicated).
+    out = subprocess.run(["pgrep", "-f", rf"[Pp]ython[0-9.]* analyst\.py --market {market}$"], capture_output=True, text=True).stdout.split()
+    return [int(p) for p in out]
+
+
+def _analyst_status(market):
+    pids = _analyst_pids(market)
+    uptime = subprocess.run(["ps", "-o", "etime=", "-p", str(pids[0])], capture_output=True, text=True).stdout.strip() if pids else None
+    return {"success": True, "market": market, "running": bool(pids), "pid": pids[0] if pids else None, "uptime": uptime}
+
+
+@app.get("/api/admin/analyst/{market}")
+def analyst_status(market: str, admin=Depends(auth.require_admin)):
+    if market not in ANALYST_MARKETS:
+        raise HTTPException(404, "unknown market")
+    return _analyst_status(market)
+
+
+@app.post("/api/admin/analyst/{market}/{action}")
+def analyst_control(market: str, action: str, admin=Depends(auth.require_admin)):
+    if market not in ANALYST_MARKETS or action not in ("start", "stop", "restart"):
+        raise HTTPException(404, "unknown market or action")
+    if action in ("stop", "restart"):
+        for pid in _analyst_pids(market):
+            os.kill(pid, signal.SIGTERM)
+        for _ in range(30):
+            if not _analyst_pids(market):
+                break
+            time.sleep(0.1)
+    if action in ("start", "restart") and not _analyst_pids(market):
+        ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+        out = open(ANALYSIS_DIR / f"analyst_{market}.out", "a")
+        subprocess.Popen([sys.executable, "analyst.py", "--market", market], cwd=str(Path(__file__).resolve().parent),
+                         stdout=out, stderr=out, start_new_session=True)  # survives a backend restart
+        time.sleep(1)
+    return _analyst_status(market)
 
 
 # Stored alert feed (trending / near a move / trend coming, both markets), newest

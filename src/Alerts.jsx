@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from './api'
+import AnalystControl from './AnalystControl'
 
 const KIND = {
   TRENDING: { label: 'Trending', color: '#26a69a' },
@@ -53,7 +54,11 @@ export default function Alerts({ onSeen }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#d1d4dc' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderBottom: '1px solid #2a2e39', flexWrap: 'wrap' }}>
         {btn('all', 'All')}{btn('india', 'India')}{btn('crypto', 'Crypto')}
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#787b86' }}>
+        <span style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+          <AnalystControl market="india" />
+          <AnalystControl market="crypto" />
+        </span>
+        <span style={{ width: '100%', fontSize: 12, color: '#787b86' }}>
           Trending · trend coming · near a move · big move — stored 7 days · refreshes every 30s
         </span>
       </div>

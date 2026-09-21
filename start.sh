@@ -108,16 +108,19 @@ while IFS='|' read -r username webview_port ai_port crypto_port is_admin; do
   fi
 done
 
-# Read-only market/account analyst (analyst.py): appends to ~/tradingview-analysis/
-# analysis_log.txt every 3 min in market hours, shown in the admin Analysis tab.
-# Never touches a bot or config. Only start one copy; stop.sh leaves it alone (it
-# sleeps outside market hours by itself).
+# Read-only market/account analysts (analyst.py): one process PER MARKET so each can be
+# started/stopped on its own (app Alerts/Report tabs). They write reports + alerts to
+# ~/tradingview-analysis/ every 3 min and never touch a bot or config. Only one copy of
+# each is started; stop.sh leaves them alone (India sleeps outside market hours itself).
 mkdir -p ~/tradingview-analysis
-if ! pgrep -f "analyst.py" >/dev/null; then
-  nohup python3 analyst.py >~/tradingview-analysis/analyst.out 2>&1 &
-  echo "analyst started (log: ~/tradingview-analysis/analysis_log.txt)"
-else
-  echo "analyst already running"
-fi
+for market in india crypto; do
+  # [Pp]: the venv interpreter shows as "Python" (capital P) in the process list, the system one as "python3"
+  if ! pgrep -f "[Pp]ython[0-9.]* analyst\.py --market $market\$" >/dev/null; then
+    nohup python3 analyst.py --market $market >~/tradingview-analysis/analyst_$market.out 2>&1 &
+    echo "$market analyst started"
+  else
+    echo "$market analyst already running"
+  fi
+done
 
 echo "stop with: ./stop.sh"
