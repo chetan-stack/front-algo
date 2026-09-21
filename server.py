@@ -432,6 +432,35 @@ def admin_notifications(admin=Depends(auth.require_admin)):
     return {"success": True, "items": items[:300]}
 
 
+# analyst.py's read-only market/account analysis log. Admin-only, and the file
+# lives outside the repo because Vite's dev server would otherwise serve it
+# (tunnel included) to anyone without a login.
+ANALYSIS_DIR = Path(os.environ.get("ANALYSIS_DIR", str(Path.home() / "tradingview-analysis")))
+ANALYSIS_FILES = {"india": "analysis_log.txt", "crypto": "crypto_analysis_log.txt"}
+
+
+@app.get("/api/admin/analysis")
+def admin_analysis(market: str = "india", admin=Depends(auth.require_admin)):
+    name = ANALYSIS_FILES.get(market)
+    if name is None:
+        raise HTTPException(404, "unknown market")
+    path = ANALYSIS_DIR / name
+    return {"success": True, "path": str(path), "lines": _tail_lines(path, 3000) or []}
+
+
+# Stored alert feed (trending / near a move / trend coming, both markets), newest
+# first. analyst.py keeps 7 days of them so they can be looked back at later.
+@app.get("/api/admin/alerts")
+def admin_alerts(limit: int = 300, admin=Depends(auth.require_admin)):
+    items = []
+    for line in reversed(_tail_lines(ANALYSIS_DIR / "alerts.jsonl", min(max(limit, 1), 2000)) or []):
+        try:
+            items.append(json.loads(line))
+        except ValueError:
+            pass
+    return {"success": True, "items": items}
+
+
 # Any logged-in user's own notifications — same error/order scan as the admin
 # feed above, just scoped to one account instead of every user. Uses
 # get_effective_user so an admin "acting as" someone sees that user's
@@ -1090,8 +1119,8 @@ def trading_api(user):
 
 
 @app.get("/api/trading/dashboard")
-def trading_dashboard(date: str = None, selectclient: str = None, user=Depends(get_effective_user)):
-    params = {k: v for k, v in {"date": date, "selectclient": selectclient}.items() if v}
+def trading_dashboard(date: str = None, selectclient: str = None, month: str = None, user=Depends(get_effective_user)):
+    params = {k: v for k, v in {"date": date, "selectclient": selectclient, "month": month}.items() if v}
     resp = requests.get(f"{trading_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 
@@ -1182,8 +1211,8 @@ def crypto_api(user):
 
 
 @app.get("/api/crypto/trading/dashboard")
-def crypto_trading_dashboard(date: str = None, user=Depends(get_effective_user)):
-    params = {"date": date} if date else {}
+def crypto_trading_dashboard(date: str = None, month: str = None, user=Depends(get_effective_user)):
+    params = {k: v for k, v in {"date": date, "month": month}.items() if v}
     resp = requests.get(f"{crypto_api(user)}/api/dashboard", params=params, timeout=20)
     return resp.json()
 

@@ -18,6 +18,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [config, setConfig] = useState(null)
   const [savingConfig, setSavingConfig] = useState(false)
   const [orderEdits, setOrderEdits] = useState({})
@@ -34,7 +35,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     setError(null)
     try {
       const client = data?.selectclient?.[0]
-      const params = new URLSearchParams({ date, ...(client ? { selectclient: client } : {}) })
+      const params = new URLSearchParams({ date, month, ...(client ? { selectclient: client } : {}) })
       const res = await apiFetch(`${prefix}/dashboard?${params}`)
       const d = await res.json()
       if (d.status !== 'success') throw new Error(d.message || 'failed to load')
@@ -46,7 +47,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [date])
+  useEffect(() => { load() }, [date, month])
 
   async function saveConfig() {
     setSavingConfig(true)
@@ -482,7 +483,8 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {data.monthwisedata?.dailyBreakdown && (
         <div style={box}>
-          <b>This month — {data.monthwisedata.totalOrder} orders, {data.monthwisedata.stoplossOrder} stoplosses, total <span style={{ color: profitColor(data.monthwisedata.totalProfit) }}>{data.monthwisedata.totalProfit}</span></b>
+          <input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ ...input, marginRight: 8 }} />
+          <b>{month} — {data.monthwisedata.totalOrder} orders, {data.monthwisedata.stoplossOrder} stoplosses, total <span style={{ color: profitColor(data.monthwisedata.totalProfit) }}>{data.monthwisedata.totalProfit}</span></b>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr><th style={th}>Date</th><th style={th}>Day</th><th style={th}>Orders</th><th style={th}>Stoplosses</th><th style={th}>Profit</th></tr></thead>

@@ -63,8 +63,8 @@ echo "backend:  $BACKEND_URL"
 SMARTAPI_DIR=~/PycharmProjects/pythonProject/SmartApi
 SMARTAPI_VENV_PYTHON=~/PycharmProjects/pythonProject/venv/bin/python
 mkdir -p "$SMARTAPI_DIR/logs"
-sqlite3 -separator '|' users.db "SELECT username, webview_port, crypto_port, is_admin FROM users;" |
-while IFS='|' read -r username webview_port crypto_port is_admin; do
+sqlite3 -separator '|' users.db "SELECT username, webview_port, ai_port, crypto_port, is_admin FROM users;" |
+while IFS='|' read -r username webview_port ai_port crypto_port is_admin; do
   if [ "$is_admin" = "1" ]; then
     account_dir="$SMARTAPI_DIR"
     crypto_account_dir="$SMARTAPI_DIR/crypto"
@@ -84,6 +84,22 @@ while IFS='|' read -r username webview_port crypto_port is_admin; do
     fi
   fi
 
+  # ai_order_service.py (Buy CE/Buy PE and every other manual/AI order
+  # button) has the exact same gap as webviewdataapi.py had -- never
+  # started by the backend on boot, only as a side effect of admin
+  # create-user/save-credentials. Confirmed it had been down for every
+  # original user since Aug 30 (only Vaibhav's ran, from account creation).
+  if ! lsof -tiTCP:"$ai_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    log_name=$(basename "$account_dir")
+    (cd "$account_dir" && PORT="$ai_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/ai_order_service.py" \
+      >"$SMARTAPI_DIR/logs/${log_name}_ai_order_service.log" 2>&1 &)
+    if grep -q "demo_mode = True" "$account_dir/document.py" 2>/dev/null; then
+      sleep 1.5
+    else
+      sleep 3
+    fi
+  fi
+
   if [ -n "$crypto_port" ] && ! lsof -tiTCP:"$crypto_port" -sTCP:LISTEN >/dev/null 2>&1; then
     log_name=$(basename "$crypto_account_dir")
     (cd "$crypto_account_dir" && PORT="$crypto_port" nohup "$SMARTAPI_VENV_PYTHON" "$SMARTAPI_DIR/crypto/webviewdataapi.py" \
@@ -91,5 +107,17 @@ while IFS='|' read -r username webview_port crypto_port is_admin; do
     sleep 1.5  # DeltaEx has no login/rate-limit step, unlike AngelOne -- no need to stagger
   fi
 done
+
+# Read-only market/account analyst (analyst.py): appends to ~/tradingview-analysis/
+# analysis_log.txt every 3 min in market hours, shown in the admin Analysis tab.
+# Never touches a bot or config. Only start one copy; stop.sh leaves it alone (it
+# sleeps outside market hours by itself).
+mkdir -p ~/tradingview-analysis
+if ! pgrep -f "analyst.py" >/dev/null; then
+  nohup python3 analyst.py >~/tradingview-analysis/analyst.out 2>&1 &
+  echo "analyst started (log: ~/tradingview-analysis/analysis_log.txt)"
+else
+  echo "analyst already running"
+fi
 
 echo "stop with: ./stop.sh"

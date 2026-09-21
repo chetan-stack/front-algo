@@ -13,9 +13,9 @@ fi
 # server.py's _kill_port. Leaves strategy bots (storesupportzone/store_exit/
 # stetergy*) alone -- those are opt-in trading loops, stopped individually
 # via the admin panel, not by this script.
-sqlite3 -separator '|' users.db "SELECT webview_port, crypto_port FROM users;" 2>/dev/null |
-while IFS='|' read -r webview_port crypto_port; do
-  for port in "$webview_port" "$crypto_port"; do
+sqlite3 -separator '|' users.db "SELECT webview_port, ai_port, crypto_port FROM users;" 2>/dev/null |
+while IFS='|' read -r webview_port ai_port crypto_port; do
+  for port in "$webview_port" "$ai_port" "$crypto_port"; do
     [ -n "$port" ] && lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | xargs -r kill
   done
 done

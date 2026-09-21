@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { apiFetch } from './api'
+import Alerts from './Alerts'
 import Chart from './Chart'
 import TradingPanel from './TradingPanel'
 import Login from './Login'
 import Admin from './Admin'
 import AdminLogs from './AdminLogs'
+import Analysis from './Analysis'
 import Notifications from './Notifications'
 import OrderBook from './OrderBook'
 import FailedOrders from './FailedOrders'
@@ -31,10 +34,38 @@ export default function App() {
   const [count, setCount] = useState(1)
   const [view, setView] = useState('charts')
   const [jump, setJump] = useState(null)
+  const [unseenAlerts, setUnseenAlerts] = useState(0)
   const { cols, rows } = LAYOUTS[count]
   const market = view.startsWith('crypto') ? 'crypto' : 'india'
   const isTrading = view === 'trading' || view === 'crypto-trading'
-  const tabs = isAdmin ? [...TABS, { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }, { id: 'all-notifications', label: 'All Notifications' }] : TABS
+  const tabs = isAdmin ? [
+    ...TABS,
+    { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }, { id: 'all-notifications', label: 'All Notifications' },
+    { id: 'alerts', label: unseenAlerts > 0 ? `Alerts (${unseenAlerts})` : 'Alerts' },
+    { id: 'analysis', label: 'India Report' }, { id: 'crypto-analysis', label: 'Crypto Report' },
+  ] : TABS
+
+  // Admin-only alert badge: count alerts newer than the last time the Alerts tab was opened.
+  // Timestamps are "YYYY-MM-DD HH:MM:SS" IST strings, so plain string comparison orders them.
+  useEffect(() => {
+    if (!token || !isAdmin) return
+    async function poll() {
+      try {
+        const res = await apiFetch('/api/admin/alerts?limit=200')
+        const data = await res.json()
+        const seen = localStorage.getItem('alertsSeen') || ''
+        setUnseenAlerts((data.items || []).filter((a) => a.ts > seen).length)
+      } catch { /* backend restarting — try again next tick */ }
+    }
+    poll()
+    const id = setInterval(poll, 30000)
+    return () => clearInterval(id)
+  }, [token, isAdmin])
+
+  function alertsSeen(latestTs) {
+    localStorage.setItem('alertsSeen', latestTs)
+    setUnseenAlerts(0)
+  }
 
   function viewOnChart(req) {
     setJump(req)
@@ -116,6 +147,10 @@ export default function App() {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
       ) : view === 'logs' ? (
         <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
+      ) : view === 'alerts' && isAdmin ? (
+        <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} /></div>
+      ) : (view === 'analysis' || view === 'crypto-analysis') && isAdmin ? (
+        <div style={{ flex: 1, minHeight: 0 }}><Analysis key={view} market={view === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
       ) : view === 'all-notifications' ? (
         <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
       ) : view === 'notifications' ? (

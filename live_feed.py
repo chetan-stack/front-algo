@@ -33,6 +33,15 @@ INDEX_TOKENS = {
     ("NSE", "BANKNIFTY"): "99926009",
     ("NSE", "FINNIFTY"): "99926037",
     ("NSE", "MIDCPNIFTY"): "99926074",
+    # Missing entirely until now — resolve("BSE:SENSEX") fell through to
+    # the scrip-master equity lookup (which only matches "-EQ" stocks, not
+    # indices) and returned None, so server.py's _fetch_angel() silently
+    # fell back to TvDatafeed for every SENSEX chart, the one thing this
+    # fix was supposed to eliminate. Both spellings mapped since TradingView
+    # uses "BSX" for the options underlying (see OPTION_UNDERLYING above)
+    # but may list the cash index itself as "SENSEX" — cheap to cover both.
+    ("BSE", "SENSEX"): "99919000",
+    ("BSE", "BSX"): "99919000",
 }
 
 EXCHANGE_TYPE_FO = {"NFO": SmartWebSocketV2.NSE_FO, "BFO": SmartWebSocketV2.BSE_FO}

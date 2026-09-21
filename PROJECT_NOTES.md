@@ -209,6 +209,32 @@ so bouncing a stuck bot doesn't require touching API keys. Backend:
 **Always use this over a manual `nohup` restart** — see the orphaned-process
 gotcha above.
 
+## Market/account analyst (added 2026-09-21)
+
+`analyst.py` — read-only, stdlib-only. Every 3 min (Mon-Fri 09:15-15:30 IST) reads
+NIFTY/BANKNIFTY/SENSEX 1-min candles (Yahoo, ~15 min delayed for SENSEX), checks
+every account's `auto_trade.json` + real running processes, and appends findings and
+recommendations to `~/tradingview-analysis/analysis_log.txt`. **It never starts, stops
+or edits anything** (see the no-autonomous-trading rule). Shown to admins only in the
+**Analysis** tab (`GET /api/admin/analysis`, `require_admin`). The log is deliberately
+outside the repo: Vite's dev server serves every file under its root, tunnel included.
+Run: `nohup python3 analyst.py > ~/tradingview-analysis/analyst.out 2>&1 &` (one copy
+only — check `pgrep -fl analyst.py`). Check: `python3 analyst.py --selftest` / `--once`.
+Sideways = 30-bar efficiency ratio < 0.25 (thresholds are by-eye, tune if it flaps).
+Support/resistance: swing highs/lows on 5m/15m/1h/1d, clustered within 0.12%; "strong" =
+weight >= 6 AND >= 2 timeframes agree (rebuilt every 15 min). Outlook labels per index:
+BREAKOUT_UP/BREAKDOWN (close beyond a strong level) -> "START", COILED (tight range at a
+level) -> "PREPARE", RANGE (sideways, no coil) -> "PAUSE", NO_SIGNAL (feed delayed).
+SENSEX comes ~15 min delayed from Yahoo, so it never gets live start/breakout signals.
+Note: there are now 7 users (Vaibhav added); the table above predates that.
+Crypto (added 2026-09-21): same engine, BTC/ETH from Binance's public klines, 24/7, checks the
+crypto configs/processes (`stetergy.py`/`stetergy_exit.py`). Files in `~/tradingview-analysis/`:
+`analysis_log.txt` (India) and `crypto_analysis_log.txt` — each keeps TODAY only (older days deleted
+at the first cycle of a new day); `alerts.jsonl` — trending / trend-coming / near-a-move / big-move
+alerts for both markets, kept 7 days, one per kind per symbol per 15 min, fired on a state CHANGE.
+App (admin-only): **Alerts** tab (unread badge, polled every 30s), **India Report**, **Crypto Report**;
+routes `/api/admin/analysis?market=india|crypto` and `/api/admin/alerts`.
+
 ## Status as of 2026-09-12
 
 App (frontend/backend/tunnels) currently stopped. ~24 bot processes still
