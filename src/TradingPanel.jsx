@@ -249,7 +249,13 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
           {market === 'india' && (
             <label>OTM offset <input style={input} value={config.set_otm ?? ''} onChange={(e) => setConfig({ ...config, set_otm: e.target.value })} /></label>
           )}
-          <label>Lot size <input style={input} value={config.lotsize ?? ''} onChange={(e) => setConfig({ ...config, lotsize: e.target.value })} /></label>
+          {/* Chart.jsx's Buy CE/PE buttons read lotsize from the backend's saved
+              config, not from this input directly — typing here only updated
+              local state, so a click on the chart still fired with whatever
+              was last saved (the "10" default) until "Save config" was
+              clicked separately on this page. Saving on blur closes that gap
+              without turning every field here into an autosave. */}
+          <label>Lot size <input style={input} value={config.lotsize ?? ''} onChange={(e) => setConfig({ ...config, lotsize: e.target.value })} onBlur={saveConfig} /></label>
           <label>Target pts <input style={input} value={config.target_points ?? ''} onChange={(e) => setConfig({ ...config, target_points: e.target.value })} /></label>
           <label>Loss pts <input style={input} value={config.loss_points ?? ''} onChange={(e) => setConfig({ ...config, loss_points: e.target.value })} /></label>
           <label>Range min <input style={input} value={config.trade_range_min ?? ''} onChange={(e) => setConfig({ ...config, trade_range_min: e.target.value })} /></label>

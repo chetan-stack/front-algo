@@ -12,16 +12,20 @@ const KIND = {
   ORDER_TRAIL: { label: 'Trail target', color: '#26a69a' },
 }
 
-// Admin-only: the backend route enforces it, this tab is just hidden from everyone else.
+// scope="all" (admin only, backend-enforced): every alert, every user, plus the analyst
+// Start/Stop/Restart controls. scope="self" (any logged-in user): only MY alerts — my own
+// order alerts, and market alerts (trending/near-move/etc) for symbols I actually trade.
+// The backend does the filtering (/api/admin/alerts vs /api/alerts); this component just
+// picks which one and whether to show admin controls.
 // Alerts are written by analyst.py and kept 7 days, so this is also the history to look back at.
-export default function Alerts({ onSeen }) {
+export default function Alerts({ onSeen, scope = 'all' }) {
   const [items, setItems] = useState([])
   const [market, setMarket] = useState('all')
   const [err, setErr] = useState('')
 
   async function load() {
     try {
-      const res = await apiFetch('/api/admin/alerts?limit=500')
+      const res = await apiFetch(`${scope === 'all' ? '/api/admin/alerts' : '/api/alerts'}?limit=500`)
       const data = await res.json()
       const list = data.items || []
       setItems(list)
@@ -37,7 +41,7 @@ export default function Alerts({ onSeen }) {
     const id = setInterval(load, 30000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [scope])
 
   const shown = items.filter((a) => market === 'all' || a.market === market)
   const btn = (id, label) => (
@@ -57,12 +61,17 @@ export default function Alerts({ onSeen }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#d1d4dc' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderBottom: '1px solid #2a2e39', flexWrap: 'wrap' }}>
         {btn('all', 'All')}{btn('india', 'India')}{btn('crypto', 'Crypto')}
-        <span style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-          <AnalystControl market="india" />
-          <AnalystControl market="crypto" />
-        </span>
+        {scope === 'all' && (
+          <span style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+            <AnalystControl market="india" />
+            <AnalystControl market="crypto" />
+          </span>
+        )}
         <span style={{ width: '100%', fontSize: 12, color: '#787b86' }}>
-          Market: trending · trend coming · near a move · big move &nbsp;|&nbsp; Orders: wrong order · exit needed · trail target — stored 7 days · refreshes every 30s
+          {scope === 'all'
+            ? 'Every user, every symbol'
+            : 'Your account’s own order alerts, plus market alerts for symbols you trade'}
+          &nbsp;— Market: trending · trend coming · near a move · big move &nbsp;|&nbsp; Orders: wrong order · exit needed · trail target — stored 7 days · refreshes every 30s
         </span>
       </div>
       <div style={{ flex: 1, overflow: 'auto', background: '#0c0e15', padding: 12, fontSize: 13 }}>
@@ -77,6 +86,7 @@ export default function Alerts({ onSeen }) {
                 {a.market === 'crypto' ? 'CRYPTO' : 'INDIA'}
               </span>
               <strong>{a.symbol}</strong>
+              {a.user && scope === 'all' && <span style={{ color: '#787b86' }}>({a.user})</span>}
               <span style={{ color: k.color, fontWeight: 600 }}>{k.label}</span>
               <span style={{ flex: 1, minWidth: 200 }}>{a.text}</span>
             </div>

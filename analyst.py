@@ -27,9 +27,20 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import certifi
+
+# The venv's Python (python.org's macOS framework build) ships no working default CA trust
+# store for urllib's plain ssl.SSLContext -- every fetch here intermittently (not always; it
+# depends on which CA the OS/OpenSSL layer happens to resolve) fails with "self-signed
+# certificate in certificate chain" / "unable to get local issuer certificate", confirmed live
+# against both Yahoo and Binance. server.py hit the identical issue and works around it the same
+# way; do it here too rather than relying on whoever launches this script to set the env var.
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 IST = timezone(timedelta(hours=5, minutes=30))
 HERE = Path(__file__).resolve().parent
@@ -69,6 +80,29 @@ def fetch_binance(symbol, tf="1m"):
     iv, n = BINANCE[tf]
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={iv}&limit={n}"
     return [(r[0] / 1000, float(r[1]), float(r[2]), float(r[3]), float(r[4])) for r in json.load(urllib.request.urlopen(url, timeout=10))]
+
+
+def _reason(e):
+    """type(e).__name__ alone hides WHY (DNS failure vs connection reset vs timeout vs HTTP 429) --
+    exactly the detail needed to tell a real outage from a rate limit. urllib.error.URLError wraps
+    the real cause in .reason (often an OSError itself); HTTPError has a numeric .code instead."""
+    reason = getattr(e, "reason", None)
+    code = getattr(e, "code", None)
+    detail = f"HTTP {code}" if code else (str(reason) if reason else str(e))
+    return f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+
+
+def fetch(fetch_fn, symbol, tf, tries=3, delay=1.5):
+    """One retry-with-backoff point for every candle fetch. A single connection reset/timeout is common and
+    usually gone within a couple seconds (URLError on Yahoo's free endpoint, in particular, after a burst of
+    requests -- see get_levels' comment); only give up after `tries` attempts and let the caller log it."""
+    for attempt in range(tries):
+        try:
+            return fetch_fn(symbol, tf)
+        except Exception:
+            if attempt == tries - 1:
+                raise
+            time.sleep(delay * (attempt + 1))
 
 
 def ema(vals, p):
@@ -150,9 +184,11 @@ def get_levels(mk, name):
     if built and time.time() - built[0] < LEVEL_REFRESH:
         return built[1], built[2]
     pts, atrs = [], {}
-    for tf, (w, k) in TFS.items():
-        bars = mk["fetch"](mk["symbols"][name], tf)
-        atrs[tf] = atr(bars)
+    for i, (tf, (w, k)) in enumerate(TFS.items()):
+        if i:
+            time.sleep(0.6)  # pace this burst (up to 4 timeframes x N symbols back-to-back) -- Yahoo's free
+        bars = fetch(mk["fetch"], mk["symbols"][name], tf)  # endpoint throttles/resets an unpaced burst, which
+        atrs[tf] = atr(bars)                                # then shows up as the NEXT cycle or two failing too
         pts += [(p, tf, w) for p in swings(bars, k)]
     _levels[key] = (time.time(), cluster(pts), atrs)
     return _levels[key][1], atrs
@@ -415,17 +451,19 @@ def alerts_lock():
         yield
 
 
-def emit(mk, name, kind, text, lines, force=False):
-    """One alert: appended to alerts.jsonl (the app's Alerts tab), the market report, and a desktop notification."""
-    key = (mk["key"], name, kind)
+def emit(mk, name, kind, text, lines, force=False, user=None):
+    """One alert: appended to alerts.jsonl (the app's Alerts tab), the market report, and a desktop notification.
+    user=None means a market-wide alert (symbol trend/move) -- everyone who trades that symbol can see it.
+    An order alert always carries the owning user's name, so it can be shown to that user ONLY."""
+    key = (mk["key"], user, name, kind)
     if not force and time.time() - _alert_seen.get(key, 0) < ALERT_COOLDOWN:
         return
     _alert_seen[key] = time.time()
-    rec = {"ts": f"{datetime.now(IST):%Y-%m-%d %H:%M:%S}", "market": mk["key"], "symbol": name, "kind": kind, "text": text}
+    rec = {"ts": f"{datetime.now(IST):%Y-%m-%d %H:%M:%S}", "market": mk["key"], "symbol": name, "kind": kind, "text": text, "user": user}
     with alerts_lock():
         with open(ALERTS, "a") as f:
             f.write(json.dumps(rec) + "\n")
-    lines.append(f"ALERT [{kind}] {name}: {text}")
+    lines.append(f"ALERT [{kind}] {(user + ': ') if user else ''}{name}: {text}")
     notify(f"{mk['label']} {name}: {kind.replace('_', ' ').lower()} - {text}")
 
 
@@ -468,13 +506,13 @@ def cycle(mk):
     lines, idx = [f"=== {now:%Y-%m-%d %H:%M} IST ==="], {}
     for name, sym in mk["symbols"].items():
         try:
-            bars = mk["fetch"](sym, "1m")
+            bars = fetch(mk["fetch"], sym, "1m")
             if len(bars) < 35:
                 lines.append(f"{name}: not enough candles yet ({len(bars)})")
                 continue
             a = idx[name] = analyze(bars)
         except Exception as e:
-            lines.append(f"{name}: data unavailable ({type(e).__name__})")
+            lines.append(f"{name}: data unavailable ({_reason(e)})")
             continue
         tags = [a["state"]]
         if a["age_min"] > STALE_MIN:
@@ -491,7 +529,7 @@ def cycle(mk):
             ol = a["ol"] = outlook(a, levels, atrs)
             lines.append(level_line(ol))
         except Exception as e:
-            lines.append(f"          levels unavailable ({type(e).__name__})")
+            lines.append(f"          levels unavailable ({_reason(e)})")
         # alerts fire on a CHANGE (e.g. sideways -> trending), never on every cycle; 15-min cooldown per kind
         last, cur = st["last"].get(name, {}), {"state": a["state"], "label": ol["label"], "building": a["building"]}
         if a["age_min"] <= STALE_MIN:
@@ -518,7 +556,7 @@ def cycle(mk):
         for key_, fs in cur.items():  # alert once per new reason for an order; a cleared reason can alert again later
             new_ = [f for f in fs if f["reason"] not in st["orders"].get(key_, set())]
             if new_:
-                emit(mk, f"{key_[0]}: {key_[1]}", key_[2], "; ".join(f["text"] for f in new_), lines, force=True)
+                emit(mk, key_[1], key_[2], "; ".join(f["text"] for f in new_), lines, force=True, user=key_[0])
         st["orders"] = {k_: {f["reason"] for f in fs} for k_, fs in cur.items()}
         key = [(u, s.split(" | open")[0], r) for u, s, r in rows]
         flagged = {f"{u}: {x[:60]}" for u, _, r in rows for x in r if x.split(":")[0] in ACCOUNT_ALERT_WORDS}
@@ -574,6 +612,30 @@ MARKETS = {
 
 def selftest():
     import tempfile
+    assert _reason(urllib.error.URLError("connection refused")) == "URLError: connection refused"
+    assert _reason(urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)) == "HTTPError: HTTP 429"
+    assert _reason(TimeoutError("timed out")) == "TimeoutError: timed out"
+    calls = {"n": 0}
+
+    def flaky(symbol, tf):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.URLError("connection reset")
+        return "ok"
+
+    orig_sleep = time.sleep
+    time.sleep = lambda s: None  # don't actually wait through the retry backoff in the test
+    try:
+        assert fetch(flaky, "X", "1m") == "ok" and calls["n"] == 3  # succeeds on the 3rd try
+        calls["n"] = 0
+        try:
+            fetch(lambda s, t: (_ for _ in ()).throw(urllib.error.URLError("down")), "X", "1m", tries=2)
+            assert False, "should have raised after exhausting retries"
+        except urllib.error.URLError:
+            pass
+    finally:
+        time.sleep = orig_sleep
+
     flat = [(i * 60, 100, 100.2, 99.8, 100 + (0.1 if i % 2 else -0.1)) for i in range(60)]
     ramp = [(i * 60, 100 + i, 101 + i, 99 + i, 100 + i) for i in range(60)]
     assert analyze(flat)["state"] == "SIDEWAYS", analyze(flat)

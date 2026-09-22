@@ -248,6 +248,15 @@ running into a strong level) and `ORDER_TRAIL` (past half its target and not aga
 NEW reason per order. Live P&L: crypto from the DeltaEx ticker `mark_price` (null result = expired contract);
 India only from the dashboard order's `profit` while store_exit is running (otherwise it is stale, so no P&L rules).
 India order alerts fire only in market hours (that process sleeps outside them).
+**2026-09-22 SSL fix**: analyst.py's fetches intermittently failed with "self-signed certificate in
+certificate chain" / "unable to get local issuer certificate" -- same root cause server.py already
+works around (the venv's python.org framework build has no working default CA trust store for plain
+urllib/ssl). Fixed the same way, `os.environ.setdefault("SSL_CERT_FILE", certifi.where())`, now set
+inside analyst.py itself so it's correct regardless of launcher. A one-off diagnostic script using
+bare `python3` (Anaconda, different trust store) will NOT reproduce this -- it only shows up under
+`.venv/bin/python`, which is what start.sh/server.py's analyst controls actually launch.
+A single failed fetch also now retries (3x, backoff) and logs the real reason (`_reason()`), not just
+the exception's class name -- that's what surfaced the SSL cause instead of a bare "URLError".
 
 ## Status as of 2026-09-12
 

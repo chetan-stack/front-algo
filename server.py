@@ -511,6 +511,43 @@ def admin_alerts(limit: int = 300, admin=Depends(auth.require_admin)):
     return {"success": True, "items": items}
 
 
+# A logged-in user's own alerts: their OWN order alerts (never another user's — that's
+# the whole point) plus market alerts (trending/near-move/etc, no owning user) for
+# symbols enabled in THEIR OWN account, india or crypto. Same shape as /api/admin/alerts,
+# just filtered, so the same Alerts.jsx renders both. Uses get_effective_user so an admin
+# "acting as" someone sees that user's alerts, same as every other trading route already does.
+@app.get("/api/alerts")
+def my_alerts(limit: int = 300, user=Depends(get_effective_user)):
+    username = user["username"]
+    checks = [(SMARTAPI_DIR, "auto_trade.json", ("NIFTY", "BANKNIFTY", "SENSEX"))]
+    # user["crypto_port"] is None for an account with no crypto setup at all (kamal, vijay) --
+    # without this guard, _managed_account_dir's "no accounts/<user> dir -> fall back to the
+    # legacy root" rule would misattribute chetan's own BTC/ETH flags to every such user.
+    if user["crypto_port"] is not None:
+        checks.append((CRYPTO_DIR, "auto_trade_crypto.json", (("BTC", "BTCUSD"), ("ETH", "ETHUSD"))))
+    symbols = set()
+    for base, cfg_name, flags in checks:
+        try:
+            cfg = json.loads((_managed_account_dir(base, username) / cfg_name).read_text())
+        except (OSError, ValueError):
+            continue
+        for f in flags:
+            name, key = f if isinstance(f, tuple) else (f, f)
+            if cfg.get(key):
+                symbols.add(name)
+    items = []
+    for line in reversed(_tail_lines(ANALYSIS_DIR / "alerts.jsonl", 2000) or []):
+        try:
+            a = json.loads(line)
+        except ValueError:
+            continue
+        if a.get("user") == username or (a.get("user") is None and a.get("symbol") in symbols):
+            items.append(a)
+        if len(items) >= min(max(limit, 1), 2000):
+            break
+    return {"success": True, "items": items}
+
+
 # Any logged-in user's own notifications — same error/order scan as the admin
 # feed above, just scoped to one account instead of every user. Uses
 # get_effective_user so an admin "acting as" someone sees that user's

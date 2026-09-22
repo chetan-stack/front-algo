@@ -25,6 +25,7 @@ const TABS = [
   { id: 'orderbook', label: 'Order Book' },
   { id: 'failed-orders', label: 'Failed Orders' },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'alerts', label: 'Alerts' },
 ]
 
 export default function App() {
@@ -38,20 +39,22 @@ export default function App() {
   const { cols, rows } = LAYOUTS[count]
   const market = view.startsWith('crypto') ? 'crypto' : 'india'
   const isTrading = view === 'trading' || view === 'crypto-trading'
-  const tabs = isAdmin ? [
-    ...TABS,
+  // Every user gets an Alerts tab, but non-admins get their OWN alerts only (backend-filtered:
+  // their own order alerts, plus market alerts for symbols they trade) — never another user's.
+  const tabs = (isAdmin ? [
+    ...TABS.filter((t) => t.id !== 'alerts'),
     { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }, { id: 'all-notifications', label: 'All Notifications' },
-    { id: 'alerts', label: unseenAlerts > 0 ? `Alerts (${unseenAlerts})` : 'Alerts' },
+    { id: 'alerts', label: 'Alerts' },
     { id: 'analysis', label: 'India Report' }, { id: 'crypto-analysis', label: 'Crypto Report' },
-  ] : TABS
+  ] : TABS).map((t) => (t.id === 'alerts' && unseenAlerts > 0 ? { ...t, label: `Alerts (${unseenAlerts})` } : t))
 
-  // Admin-only alert badge: count alerts newer than the last time the Alerts tab was opened.
-  // Timestamps are "YYYY-MM-DD HH:MM:SS" IST strings, so plain string comparison orders them.
+  // Alert badge for everyone: count alerts (mine, or all if admin) newer than the last time
+  // the Alerts tab was opened. Timestamps are "YYYY-MM-DD HH:MM:SS" IST, so string-comparable.
   useEffect(() => {
-    if (!token || !isAdmin) return
+    if (!token) return
     async function poll() {
       try {
-        const res = await apiFetch('/api/admin/alerts?limit=200')
+        const res = await apiFetch(`${isAdmin ? '/api/admin/alerts' : '/api/alerts'}?limit=200`)
         const data = await res.json()
         const seen = localStorage.getItem('alertsSeen') || ''
         setUnseenAlerts((data.items || []).filter((a) => a.ts > seen).length)
@@ -147,8 +150,8 @@ export default function App() {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
       ) : view === 'logs' ? (
         <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
-      ) : view === 'alerts' && isAdmin ? (
-        <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} /></div>
+      ) : view === 'alerts' ? (
+        <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} /></div>
       ) : (view === 'analysis' || view === 'crypto-analysis') && isAdmin ? (
         <div style={{ flex: 1, minHeight: 0 }}><Analysis key={view} market={view === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
       ) : view === 'all-notifications' ? (
