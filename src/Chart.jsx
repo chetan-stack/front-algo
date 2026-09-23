@@ -35,6 +35,41 @@ function profitColor(v) {
   return v > 0 ? '#26a69a' : v < 0 ? '#ef5350' : '#787b86'
 }
 
+// Chart overlay that can be dragged by its header and collapsed with ▾, so it
+// never permanently covers candles/other tools. Offset is a translate on top
+// of the caller's absolute position, so callers keep their own top/left/right.
+function FloatPanel({ title, style, children }) {
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [open, setOpen] = useState(true)
+  const dragRef = useRef(null)
+  const onPointerDown = (e) => {
+    if (e.target.closest('button')) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragRef.current = { x: e.clientX - offset.x, y: e.clientY - offset.y }
+  }
+  const onPointerMove = (e) => {
+    if (dragRef.current) setOffset({ x: e.clientX - dragRef.current.x, y: e.clientY - dragRef.current.y })
+  }
+  return (
+    <div style={{ position: 'absolute', zIndex: 15, ...style, transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+      <div
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null }}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#2a2e39', color: '#d1d4dc', fontSize: 12, padding: '3px 6px', borderRadius: open ? '6px 6px 0 0' : 6, cursor: 'move', userSelect: 'none', touchAction: 'none' }}
+      >
+        <span style={{ color: '#787b86' }}>⠿</span>
+        <span style={{ flex: 1, fontWeight: 600 }}>{title}</span>
+        <button
+          onClick={() => setOpen((o) => !o)} aria-label={open ? 'Collapse' : 'Expand'}
+          style={{ background: 'none', border: 'none', color: '#d1d4dc', cursor: 'pointer', padding: 0 }}
+        >
+          {open ? '▾' : '▸'}
+        </button>
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
 function computeLevels(order) {
   if (order.entryPrice == null) return null
   const entry = order.entryPrice
@@ -79,14 +114,22 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [tool, setTool] = useState(null)
   const [trendArmed, setTrendArmed] = useState(false)
   const [fibArmed, setFibArmed] = useState(false)
-  const [drawings, setDrawings] = useState([])
+  // Switching tabs away from Charts unmounts this component entirely (App.jsx
+  // renders one view at a time), which used to wipe drawings/EMAs on return —
+  // persisted the same way chartAlerts already is below, keyed by symbol so
+  // each screen gets back only its own lines.
+  const [drawings, setDrawings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('chartDrawings') || '[]') } catch { return [] }
+  })
   const toolRef = useRef(null)
   const symbolRef = useRef(symbol)
   const fibFirstRef = useRef(null)
   const trendFirstRef = useRef(null)
   const drawLinesRef = useRef([])
   const trendSeriesRef = useRef({})
-  const [emas, setEmas] = useState([])
+  const [emas, setEmas] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('chartEmas') || '[]') } catch { return [] }
+  })
   const [showEmaForm, setShowEmaForm] = useState(false)
   const [emaPeriod, setEmaPeriod] = useState('20')
   const emaSeriesRef = useRef({})
@@ -110,6 +153,21 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     localStorage.setItem('chartAlerts', JSON.stringify(alerts))
     alertsRef.current = alerts
   }, [alerts])
+
+  useEffect(() => {
+    // Multi-screen layouts mount several Chart instances at once, each with
+    // its own in-memory `drawings` covering every symbol it has visited.
+    // Overwriting the whole key from one instance would erase another
+    // screen's drawings for whatever symbol IT is on — merge in only this
+    // instance's own current symbol instead of clobbering the rest.
+    try {
+      const stored = JSON.parse(localStorage.getItem('chartDrawings') || '[]')
+      const others = stored.filter((d) => d.symbol !== symbol)
+      const mine = drawings.filter((d) => d.symbol === symbol)
+      localStorage.setItem('chartDrawings', JSON.stringify([...others, ...mine]))
+    } catch { localStorage.setItem('chartDrawings', JSON.stringify(drawings)) }
+  }, [drawings, symbol])
+  useEffect(() => { localStorage.setItem('chartEmas', JSON.stringify(emas)) }, [emas])
 
   useEffect(() => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -331,22 +389,36 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         const r = await apiFetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
         const q = await r.json()
         if (cancelled || !q.success) return
-        seriesRef.current.update({ time: q.time, open: q.open, high: q.high, low: q.low, close: q.close })
-        candlesRef.current = [...candlesRef.current.slice(0, -1), { time: q.time, open: q.open, high: q.high, low: q.low, close: q.close }]
+        const bar = foldIntoCandle(q.time, q.open, q.high, q.low, q.close)
         setPrice(q.close)
-        setNextClose(q.time + INTERVAL_SECONDS[interval])
+        if (bar) setNextClose(bar.time + INTERVAL_SECONDS[interval])
         checkAlerts(q.close, symbol)
       }, 3000)
     }
 
-    // Live mode has no server-side bar, just a raw LTP tick — fold it into
-    // the in-progress last candle the same way the poll loop does.
-    function applyTick(closePrice) {
+    // Fold a price (live tick, or /api/quote's 1-minute bar) into the candle
+    // for the SELECTED interval. Both paths used to write into the last loaded
+    // candle forever — live mode never rolled over (one ever-growing candle),
+    // and polling wrote 1-minute bars onto 5m/15m charts — so the same symbol
+    // drew different candles per interval/mode. Buckets step from the last
+    // bar's own time so NSE's 09:15-aligned 1h/1d bars stay aligned.
+    function foldIntoCandle(t, open, high, low, close) {
       const last = candlesRef.current.at(-1)
-      if (cancelled || !last) return
-      const updated = { time: last.time, open: last.open, high: Math.max(last.high, closePrice), low: Math.min(last.low, closePrice), close: closePrice }
-      seriesRef.current.update(updated)
-      candlesRef.current = [...candlesRef.current.slice(0, -1), updated]
+      if (cancelled || !last || t < last.time) return null
+      const step = INTERVAL_SECONDS[interval]
+      const bucket = last.time + Math.floor((t - last.time) / step) * step
+      const bar = bucket === last.time
+        ? { time: last.time, open: last.open, high: Math.max(last.high, high), low: Math.min(last.low, low), close }
+        : { time: bucket, open, high, low, close }
+      seriesRef.current.update(bar)
+      candlesRef.current = bucket === last.time ? [...candlesRef.current.slice(0, -1), bar] : [...candlesRef.current, bar]
+      return bar
+    }
+
+    function applyTick(closePrice, t) {
+      const bar = foldIntoCandle(t, closePrice, closePrice, closePrice, closePrice)
+      if (!bar) return
+      setNextClose(bar.time + INTERVAL_SECONDS[interval])
       setPrice(closePrice)
       checkAlerts(closePrice, symbol)
 
@@ -370,7 +442,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       ws.onmessage = (e) => {
         lastTickAt = Date.now()
         alerted = false
-        applyTick(JSON.parse(e.data).price)
+        const d = JSON.parse(e.data)
+        applyTick(d.price, d.time ?? Math.floor(Date.now() / 1000))
       }
       ws.onclose = () => {
         clearInterval(watchdogId)
@@ -437,12 +510,18 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const chartContract = normalizeContract(parseContract(rawSymbol))
   const isOptionTradeable = !!chartContract && TRADEABLE_UNDERLYINGS.includes(chartContract.underlying)
   const isIndexTradeable = !chartContract && TRADEABLE_UNDERLYINGS.includes(rawSymbol)
-  const matchedOrder = chartContract
-    ? pendingOrders.find((o) => {
+  // parseContract drops expiry, so storeorder can hold several matches (an old
+  // exited 22SEP 23400CE alongside the open 29SEP one) — prefer the open one,
+  // else the newest (storeorder appends). find() used to grab the stale exited
+  // one and draw its entry/target/stoploss/P&L instead.
+  // ponytail: two OPEN orders on the same strike+right but different expiries would still collide; match expiry if that ever happens.
+  const strikeMatches = chartContract
+    ? pendingOrders.filter((o) => {
         const oc = normalizeContract(parseContract(o.symbol))
         return oc && oc.underlying === chartContract.underlying && oc.strike === chartContract.strike && oc.right === chartContract.right
       })
-    : null
+    : []
+  const matchedOrder = strikeMatches.findLast((o) => o.orderterm !== 'exit') ?? strikeMatches.at(-1) ?? null
 
   useEffect(() => { hasMatchedOrderRef.current = !!matchedOrder }, [matchedOrder])
 
@@ -830,7 +909,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       )}
 
       {(drawings.some((d) => d.symbol === symbol) || alerts.some((a) => a.symbol === symbol)) && (
-        <div style={{ position: 'absolute', top: 44, left: 8, zIndex: 15, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <FloatPanel title="Drawings & alerts" style={{ top: 44, left: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {drawings.some((d) => d.symbol === symbol) && (
             <div style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 8, fontSize: 12, color: '#d1d4dc', minWidth: 160 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Drawings</div>
@@ -868,7 +948,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
               ))}
             </div>
           )}
-        </div>
+          </div>
+        </FloatPanel>
       )}
 
       {toasts.length > 0 && (
@@ -882,7 +963,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       )}
 
       {matchedOrder && (
-        <div style={{ position: 'absolute', top: 44, right: 8, background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 10, fontSize: 12, color: '#d1d4dc', zIndex: 15, width: 190 }}>
+        <FloatPanel title="Pending order" style={{ top: 44, right: 8, width: 190 }}>
+        <div style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '0 0 6px 6px', padding: 10, fontSize: 12, color: '#d1d4dc' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <b>Pending order</b>
             <span style={{ color: matchedOrder.trend === 'buy' ? '#26a69a' : '#ef5350' }}>{matchedOrder.trend}</span>
@@ -925,6 +1007,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
             </button>
           </div>
         </div>
+        </FloatPanel>
       )}
 
       {aiOpen && (

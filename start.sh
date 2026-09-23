@@ -3,7 +3,23 @@
 cd "$(dirname "$0")"
 mkdir -p logs
 
-# kill any previous run so the backend port is free before we bind it again
+# kill any previous run so the backend port is free before we bind it again.
+# .runpids only remembers the PIDs from THIS script's own last run — if a
+# previous backend was ever started a different way (a new terminal, a
+# reboot, a crash) and never went through stop.sh, it's invisible to that
+# file and would sit there forever as dead weight. Confirmed live: 8 orphaned
+# server.py copies piled up over more than a week this way, silently eating
+# memory until free RAM hit ~15MB and requests started failing. Sweep by
+# name too (scoped to this project's own path, not every server.py on the
+# machine) so an orphan can't survive a restart just because .runpids forgot it.
+pkill -f "$(pwd)/server.py" 2>/dev/null
+pkill -f "$(pwd)/node_modules/.bin/vite" 2>/dev/null
+sleep 1
+# Confirmed live: a stuck orphan under memory pressure ignored plain SIGTERM
+# entirely (sat there unchanged) and only -9 actually removed it — so don't
+# assume the pkill above worked, force anything still standing.
+pkill -9 -f "$(pwd)/server.py" 2>/dev/null
+pkill -9 -f "$(pwd)/node_modules/.bin/vite" 2>/dev/null
 if [ -f .runpids ]; then
   kill $(cat .runpids) 2>/dev/null
   # wait for the old frontend/backend to release their ports; otherwise vite silently drifts to 5174

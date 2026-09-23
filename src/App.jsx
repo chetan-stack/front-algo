@@ -33,12 +33,15 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('isAdmin') === 'true')
   const [actingAs, setActingAs] = useState(() => localStorage.getItem('actingAs') || '')
   const [count, setCount] = useState(1)
-  const [view, setView] = useState('charts')
+  // One view per screen: any tab can go in any screen (charts beside the
+  // order book, notifications, etc). The top tab bar drives screen 1.
+  const [panes, setPanes] = useState(['charts', 'charts', 'charts', 'charts'])
+  const view = panes[0]
+  const setView = (v) => setPanes((p) => [v, ...p.slice(1)])
+  const setPaneView = (i, v) => setPanes((p) => p.map((x, j) => (j === i ? v : x)))
   const [jump, setJump] = useState(null)
   const [unseenAlerts, setUnseenAlerts] = useState(0)
   const { cols, rows } = LAYOUTS[count]
-  const market = view.startsWith('crypto') ? 'crypto' : 'india'
-  const isTrading = view === 'trading' || view === 'crypto-trading'
   // Every user gets an Alerts tab, but non-admins get their OWN alerts only (backend-filtered:
   // their own order alerts, plus market alerts for symbols they trade) — never another user's.
   const tabs = (isAdmin ? [
@@ -105,7 +108,28 @@ export default function App() {
     setActingAs('')
   }
 
-  const isChartsView = view === 'charts' || view === 'crypto-charts'
+  function renderView(v, i) {
+    const market = v.startsWith('crypto') ? 'crypto' : 'india'
+    if (v === 'admin') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
+    if (v === 'logs') return <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
+    if (v === 'alerts') return <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} /></div>
+    if ((v === 'analysis' || v === 'crypto-analysis') && isAdmin) return <div style={{ flex: 1, minHeight: 0 }}><Analysis key={v} market={v === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
+    if (v === 'all-notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
+    if (v === 'notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
+    if (v === 'orderbook') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
+    if (v === 'failed-orders') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
+    if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
+    return (
+      <div style={{ flex: 1, minHeight: 0 }}><Chart
+        key={`${market}-${i}`}
+        market={market}
+        defaultSymbol={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
+        defaultLabel={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
+        jump={i === 0 ? jump : null}
+        onJumpConsumed={i === 0 ? () => setJump(null) : undefined}
+      /></div>
+    )
+  }
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#131722' }}>
@@ -119,7 +143,7 @@ export default function App() {
             {t.label}
           </button>
         ))}
-        {isChartsView && Object.keys(LAYOUTS).map((n) => (
+        {Object.keys(LAYOUTS).map((n) => (
           <button
             key={n}
             onClick={() => setCount(Number(n))}
@@ -146,43 +170,26 @@ export default function App() {
           </button>
         </div>
       )}
-      {view === 'admin' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
-      ) : view === 'logs' ? (
-        <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
-      ) : view === 'alerts' ? (
-        <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} /></div>
-      ) : (view === 'analysis' || view === 'crypto-analysis') && isAdmin ? (
-        <div style={{ flex: 1, minHeight: 0 }}><Analysis key={view} market={view === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
-      ) : view === 'all-notifications' ? (
-        <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
-      ) : view === 'notifications' ? (
-        <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
-      ) : view === 'orderbook' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
-      ) : view === 'failed-orders' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
-      ) : isTrading ? (
-        <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
-      ) : (
-        <div style={{
-          flex: 1, display: 'grid',
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gridTemplateRows: `repeat(${rows}, 1fr)`,
-          gap: 2,
-        }}>
-          {Array.from({ length: count }, (_, i) => (
-            <Chart
-              key={`${market}-${i}`}
-              market={market}
-              defaultSymbol={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
-              defaultLabel={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
-              jump={i === 0 ? jump : null}
-              onJumpConsumed={i === 0 ? () => setJump(null) : undefined}
-            />
-          ))}
-        </div>
-      )}
+      <div style={{
+        flex: 1, minHeight: 0, display: 'grid',
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+        gap: 2,
+      }}>
+        {panes.slice(0, count).map((v, i) => (
+          <div key={i} style={{ minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: count > 1 ? '1px solid #2a2e39' : 'none' }}>
+            {count > 1 && (
+              <select
+                value={v} onChange={(e) => setPaneView(i, e.target.value)} aria-label={`Screen ${i + 1} tab`}
+                style={{ background: '#1e222d', color: '#d1d4dc', border: 'none', borderBottom: '1px solid #2a2e39', padding: '3px 6px', fontSize: 12 }}
+              >
+                {tabs.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+            )}
+            {renderView(v, i)}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
