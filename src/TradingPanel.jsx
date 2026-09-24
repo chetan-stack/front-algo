@@ -235,6 +235,20 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
             <input type="checkbox" checked={!!config.withmoney} onChange={(e) => setConfig({ ...config, withmoney: e.target.checked })} />
             With money
           </label>
+          {/* Live-money guards (SmartApi live_trade.py): checked before every live
+              entry; exits of open live positions are never blocked. */}
+          {market === 'india' && config.withmoney && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid #ef5350', borderRadius: 4, padding: '4px 8px', color: config.live_halt ? '#ef5350' : undefined }}
+                title="Blocks every new live entry (auto, chart, AI). Open positions keep their broker stoploss and normal exits.">
+                <input type="checkbox" checked={!!config.live_halt} onChange={(e) => setConfig({ ...config, live_halt: e.target.checked })} />
+                Stop new live trades
+              </label>
+              <label title="Blocks new live entries once today's broker P&L (all positions) reaches this loss. Blank = no cap.">
+                Max daily loss ₹ <input style={input} value={config.live_max_daily_loss ?? ''} onChange={(e) => setConfig({ ...config, live_max_daily_loss: e.target.value })} placeholder="no cap" />
+              </label>
+            </>
+          )}
           {market === 'india' && (
             <>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

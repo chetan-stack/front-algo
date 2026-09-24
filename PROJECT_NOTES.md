@@ -280,3 +280,16 @@ the broker's own data: positions (`obj.position()` via webviewdataapi `/api/posi
 `/api/trading/positions`) and today's order book (`/api/trading/orderbook`), polled every 8s. Exit still
 goes through the existing exit route, which sells the DB-recorded qty, not the broker's net qty.
 Crypto has no broker routes yet (DeltaEx positions/order book not wired).
+
+## Live money (branch `live_changes`, 2026-09-24)
+
+`SmartApi/live_trade.py` is the only real-money path; every change is behind withmoney or a position
+recorded as live, and paper is unchanged (`SmartApi/test_paper_unchanged.py`). A position's mode is fixed
+at entry in the `live_orders` table (database.db): paper positions always exit on paper, live ones always at
+the broker. Live entries: guards first (dashboard "Stop new live trades" = `live_halt`, "Max daily loss" =
+`live_max_daily_loss`, funds, one live copy per bot per account via `.<bot>.live.lock`), then fill
+confirmation (broker qty/avg price recorded), then a STOPLOSS_LIMIT sell at the broker (trigger = fill -
+stoploss points, kept in sync by store_exit). Exits cancel the SL and sell the broker's net qty; an SL filled
+at the broker or a close in the AngelOne app closes the record. Live positions square off at 15:10. Live
+option selling is blocked. Before going live: `cd SmartApi && ../venv/bin/python live_preflight.py`
+(read-only), then a supervised 1-lot test. Tests: `test_live_trade.py` (fake broker), `test_paper_unchanged.py`.
