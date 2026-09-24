@@ -215,10 +215,13 @@ def _on_data(wsapp, message, loop):
         loop.call_soon_threadsafe(q.put_nowait, message)
 
 
-def _on_disconnect():
+def _on_disconnect(sws):
+    # Only forget the connection this callback belongs to — a late callback
+    # from an old, already-replaced connection must not drop the new one.
     global _sws
     print("live feed closed")
-    _sws = None
+    if _sws is sws:
+        _sws = None
 
 
 def _ensure_connected(loop):
@@ -229,25 +232,56 @@ def _ensure_connected(loop):
         jwt_token, feed_token, api_key = _login()
         sws = SmartWebSocketV2(jwt_token, api_key, os.environ["SMARTAPI_USER_ID"], feed_token)
         sws.on_data = lambda wsapp, message: _on_data(wsapp, message, loop)
-        sws.on_error = lambda wsapp, error: print("live feed error", error)
-        sws.on_close = lambda wsapp: _on_disconnect()
+        # The library signals "gave up" via on_error ("Max retry attempt reached")
+        # and its own _on_close crashes on this websocket-client version, so our
+        # on_close never ran — _sws stayed a dead connection and every subscribe
+        # failed ("Connection is already closed") until a backend restart
+        # (network blip 2026-09-24 12:07). Treat any reported error as dead:
+        # the next subscribe reconnects and resubscribes everything.
+        sws.on_error = lambda *args: (print("live feed error", *args[1:]), _on_disconnect(sws))
+        sws.on_close = lambda *args: _on_disconnect(sws)
         opened = threading.Event()
         sws.on_open = lambda wsapp: opened.set()
         threading.Thread(target=sws.connect, daemon=True).start()
         opened.wait(timeout=10)
         _sws = sws
+        # Re-subscribe tokens that browser charts are still waiting on from before a
+        # reconnect — their queues stay registered in _subs across the drop.
+        by_type = {}
+        for token, entry in _subs.items():
+            if entry["queues"]:
+                by_type.setdefault(entry["exchange_type"], []).append(token)
+        if by_type:
+            sws.subscribe("live1", SmartWebSocketV2.LTP_MODE,
+                          [{"exchangeType": t, "tokens": toks} for t, toks in by_type.items()])
 
 
 async def subscribe(exchange_type, token):
     """Register interest in a token; returns an asyncio.Queue of raw tick dicts."""
+    global _sws
+    loop = asyncio.get_running_loop()
     if _sws is None:
-        await asyncio.to_thread(_ensure_connected, asyncio.get_running_loop())
+        await asyncio.to_thread(_ensure_connected, loop)
     queue = asyncio.Queue()
     entry = _subs.setdefault(token, {"exchange_type": exchange_type, "queues": set()})
     is_new = not entry["queues"]
     entry["queues"].add(queue)
     if is_new:
-        _sws.subscribe("live1", SmartWebSocketV2.LTP_MODE, [{"exchangeType": exchange_type, "tokens": [token]}])
+        try:
+            _sws.subscribe("live1", SmartWebSocketV2.LTP_MODE, [{"exchangeType": exchange_type, "tokens": [token]}])
+        except Exception:
+            # Connection died without telling us: reconnect once (which re-subscribes
+            # everything in _subs, including this token). If that fails too, don't
+            # leave a half-registered entry — it made every later chart for this
+            # symbol think it was already subscribed and wait forever for ticks.
+            _sws = None
+            try:
+                await asyncio.to_thread(_ensure_connected, loop)
+            except Exception:
+                entry["queues"].discard(queue)
+                if not entry["queues"]:
+                    _subs.pop(token, None)
+                raise
     return queue
 
 
@@ -259,7 +293,10 @@ def unsubscribe(token, queue):
     if not entry["queues"]:
         del _subs[token]
         if _sws:
-            _sws.unsubscribe("live1", SmartWebSocketV2.LTP_MODE, [{"exchangeType": entry["exchange_type"], "tokens": [token]}])
+            try:
+                _sws.unsubscribe("live1", SmartWebSocketV2.LTP_MODE, [{"exchangeType": entry["exchange_type"], "tokens": [token]}])
+            except Exception:
+                pass  # connection already gone; the next reconnect won't include this token
 
 
 def demo():

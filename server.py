@@ -1282,6 +1282,12 @@ def trading_funds(user=Depends(get_effective_user)):
     return resp.json()
 
 
+@app.get("/api/trading/positions")
+def trading_positions(user=Depends(get_effective_user)):
+    resp = requests.get(f"{trading_api(user)}/api/positions", timeout=20)
+    return resp.json()
+
+
 @app.get("/api/trading/failed-orders")
 def trading_failed_orders(user=Depends(get_effective_user)):
     resp = requests.get(f"{trading_api(user)}/api/failed-orders", timeout=20)

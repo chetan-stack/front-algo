@@ -30,6 +30,33 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const [expandedSignal, setExpandedSignal] = useState(null)
   const [cryptoQuery, setCryptoQuery] = useState('')
   const [cryptoUnderlying, setCryptoUnderlying] = useState('BTC')
+  // withmoney (india): the broker is the source of truth for what's held and
+  // what executed — positions (qty, avg price, LTP, P&L) and the order book —
+  // not the bot's own database, which can't see partial fills, rejected exits
+  // or trades placed in the AngelOne app. Uses the SAVED setting, not an
+  // unsaved checkbox tick.
+  const brokerMode = market === 'india' && !!data?.form_data?.withmoney
+  const [broker, setBroker] = useState({ positions: [], orders: [], error: null, loaded: false })
+  useEffect(() => {
+    if (!brokerMode) return
+    let cancelled = false
+    async function poll() {
+      try {
+        const [p, o] = await Promise.all([
+          apiFetch(`${prefix}/positions`).then((r) => r.json()),
+          apiFetch(`${prefix}/orderbook`).then((r) => r.json()),
+        ])
+        if (cancelled) return
+        const err = [p, o].find((x) => x.status !== 'success')
+        setBroker({ positions: p.positions || [], orders: o.orders || [], error: err ? (err.message || 'broker request failed') : null, loaded: true })
+      } catch (e) {
+        if (!cancelled) setBroker((b) => ({ ...b, error: e.message, loaded: true }))
+      }
+    }
+    poll()
+    const id = setInterval(poll, 8000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [brokerMode, prefix])
   const [cryptoResults, setCryptoResults] = useState(null)
   const [cryptoSearchBusy, setCryptoSearchBusy] = useState(false)
 
@@ -278,7 +305,107 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         </div>
       </div>
 
-      {data.storeorder?.length > 0 && (
+      {brokerMode && (
+        <div style={box}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <b>Positions — from broker (live money)</b>
+            <span style={{ fontSize: 12, color: '#787b86' }}>AngelOne · refreshes every 8s</span>
+          </div>
+          {broker.error && <div style={{ color: '#ef5350', fontSize: 12, marginTop: 6 }}>Broker: {broker.error}</div>}
+          {!broker.loaded ? <div style={{ color: '#787b86', marginTop: 8 }}>Loading…</div> : broker.positions.length === 0 ? (
+            <div style={{ color: '#787b86', marginTop: 8 }}>No positions at the broker today.</div>
+          ) : (
+            <div style={{ overflowX: 'auto', marginTop: 8 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr>
+                  <th style={th}>Symbol</th><th style={th}>Status</th><th style={th}>Net qty</th><th style={th}>Lots</th>
+                  <th style={th}>Buy avg</th><th style={th}>Sell avg</th><th style={th}>LTP</th><th style={th}>P&amp;L</th>
+                  <th style={th}>Target / SL pt</th><th style={th} colSpan={2}></th>
+                </tr></thead>
+                <tbody>
+                  {broker.positions.map((p) => {
+                    const netqty = Number(p.netqty) || 0
+                    const open = netqty !== 0
+                    const pnl = Number(p.pnl ?? (Number(p.realised || 0) + Number(p.unrealised || 0)))
+                    const tracked = (data.storeorder || []).find((o) => o.symbol === p.tradingsymbol)
+                    const since = (data.fetchdata || []).filter((t) => t.script === p.tradingsymbol).map((t) => t.createddate).sort().at(-1)
+                    const pAlert = open ? latestOrderAlert(alerts, p.tradingsymbol, since) : null
+                    const hi = pAlert ? ORDER_ALERT_STYLE[pAlert.kind].color : null
+                    const busy = savingOrder === p.tradingsymbol
+                    return (
+                      <Fragment key={`${p.tradingsymbol}-${p.producttype}`}>
+                        <tr style={hi ? { background: `${hi}1f`, boxShadow: `inset 3px 0 0 ${hi}` } : undefined}>
+                          <td style={td}>{p.tradingsymbol}</td>
+                          <td style={{ ...td, color: open ? '#26a69a' : '#787b86' }}>{open ? (netqty > 0 ? 'Open (long)' : 'Open (short)') : 'Closed'}</td>
+                          <td style={td}>{netqty}</td>
+                          <td style={td}>{Number(p.lotsize) ? Math.abs(netqty) / Number(p.lotsize) : '—'}</td>
+                          <td style={td}>{p.buyavgprice}</td>
+                          <td style={td}>{p.sellavgprice}</td>
+                          <td style={td}>{p.ltp}</td>
+                          <td style={{ ...td, color: profitColor(pnl) }}>{Number.isFinite(pnl) ? pnl.toFixed(2) : '—'}</td>
+                          <td style={td}>{tracked ? `${tracked.targetpoint} / ${tracked.stoplosspoint}` : '—'}</td>
+                          <td style={td}>
+                            {open && (
+                              <button onClick={() => viewOnChart(p.tradingsymbol)} disabled={chartLoading === p.tradingsymbol} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
+                                {chartLoading === p.tradingsymbol ? '…' : 'View chart'}
+                              </button>
+                            )}
+                          </td>
+                          <td style={td}>
+                            {open && tracked && tracked.orderterm !== 'exit' && (
+                              <button onClick={() => exitOrder(p.tradingsymbol)} disabled={busy} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
+                                {busy ? '…' : 'Exit'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {pAlert && (
+                          <tr style={{ background: `${hi}14` }}>
+                            <td style={td} colSpan={11}><OrderAlert alert={pAlert} /></td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {brokerMode && broker.orders.length > 0 && (
+        <div style={box}>
+          <b>Trade history — from broker order book (today)</b>
+          <div style={{ overflowX: 'auto', marginTop: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr>
+                <th style={th}>Time</th><th style={th}>Symbol</th><th style={th}>Side</th><th style={th}>Qty</th>
+                <th style={th}>Filled</th><th style={th}>Avg price</th><th style={th}>Status</th><th style={th}>Broker message</th>
+              </tr></thead>
+              <tbody>
+                {[...broker.orders].sort((a, b) => String(b.updatetime || '').localeCompare(String(a.updatetime || ''))).map((o) => {
+                  const st = (o.status || o.orderstatus || '').toLowerCase()
+                  return (
+                    <tr key={o.orderid || `${o.tradingsymbol}-${o.updatetime}`}>
+                      <td style={td}>{o.updatetime || o.exchtime || '—'}</td>
+                      <td style={td}>{o.tradingsymbol}</td>
+                      <td style={{ ...td, color: o.transactiontype === 'BUY' ? '#26a69a' : '#ef5350' }}>{o.transactiontype}</td>
+                      <td style={td}>{o.quantity}</td>
+                      <td style={td}>{o.filledshares ?? '—'}</td>
+                      <td style={td}>{o.averageprice}</td>
+                      <td style={{ ...td, color: st === 'complete' ? '#26a69a' : st === 'rejected' || st === 'cancelled' ? '#ef5350' : '#d1d4dc' }}>{o.status || o.orderstatus}</td>
+                      <td style={{ ...td, color: '#787b86' }}>{o.text || ''}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!brokerMode && data.storeorder?.length > 0 && (
         <div style={box}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <b>Open / recent orders</b>
@@ -471,7 +598,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         </div>
       )}
 
-      {data.fetchdata?.length > 0 && (
+      {!brokerMode && data.fetchdata?.length > 0 && (
         <div style={box}>
           <b>Trade history — {date}</b>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>

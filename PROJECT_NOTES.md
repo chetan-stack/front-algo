@@ -274,3 +274,9 @@ any logged-in user (market data, not account data); the Trading panel shows it b
 checkbox with that index's newest market alert today. Order alerts (ORDER_*) show only on OPEN
 positions, newest one only, in the Trading order table and the chart's Pending-order box
 (`src/orderAlerts.jsx`).
+Broker mode (added 2026-09-24): when an india account's SAVED `withmoney` is true, the Trading panel
+replaces the DB-backed "Open / recent orders" (storeorder) and "Trade history" (ordertoken) tables with
+the broker's own data: positions (`obj.position()` via webviewdataapi `/api/positions` ->
+`/api/trading/positions`) and today's order book (`/api/trading/orderbook`), polled every 8s. Exit still
+goes through the existing exit route, which sells the DB-recorded qty, not the broker's net qty.
+Crypto has no broker routes yet (DeltaEx positions/order book not wired).
