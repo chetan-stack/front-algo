@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createChart, CandlestickSeries, LineSeries, LineStyle } from 'lightweight-charts'
 import { parseContract, normalizeContract } from './contracts'
 import AiChat from './AiChat'
+import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE } from './orderAlerts'
 import { API, apiFetch } from './api'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d']
@@ -143,6 +144,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [live, setLive] = useState(initial?.live ?? false)
   const [liveConnected, setLiveConnected] = useState(false)
   const hasMatchedOrderRef = useRef(false)
+  const alerts_ = useAlerts()
 
   useEffect(() => { onStateChange?.({ symbol, label, interval, live }) }, [symbol, label, interval, live])
 
@@ -539,6 +541,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const matchedOrder = strikeMatches.findLast((o) => o.orderterm !== 'exit') ?? strikeMatches.at(-1) ?? null
 
   useEffect(() => { hasMatchedOrderRef.current = !!matchedOrder }, [matchedOrder])
+  // Only an OPEN position gets its analyst alert, and only the newest one.
+  const matchedAlert = matchedOrder && matchedOrder.orderterm !== 'exit' ? latestOrderAlert(alerts_, matchedOrder.symbol, matchedOrder.createdAt) : null
 
   // The backend's stored `profit` is a snapshot (0/stale) until the order is
   // actually exited — it isn't recomputed against current LTP while open. So
@@ -978,8 +982,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       )}
 
       {matchedOrder && (
-        <FloatPanel title="Pending order" style={{ top: 44, right: 8, width: 190 }}>
-        <div style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '0 0 6px 6px', padding: 10, fontSize: 12, color: '#d1d4dc' }}>
+        <FloatPanel title="Pending order" style={{ top: 44, right: 8, width: 240 }}>
+        <div style={{ background: '#1e222d', border: `1px solid ${matchedAlert ? ORDER_ALERT_STYLE[matchedAlert.kind].color : '#2a2e39'}`, borderRadius: '0 0 6px 6px', padding: 10, fontSize: 12, color: '#d1d4dc' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <b>Pending order</b>
             <span style={{ color: matchedOrder.trend === 'buy' ? '#26a69a' : '#ef5350' }}>{matchedOrder.trend}</span>
@@ -990,6 +994,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
               {Math.round(livePnlPoints ?? matchedOrder.profit)}
             </b>
           </div>
+          {matchedAlert && <div style={{ marginBottom: 8 }}><OrderAlert alert={matchedAlert} /></div>}
           {matchedOrder.entryPrice == null ? (
             <div style={{ color: '#787b86' }}>No entry price found for this order.</div>
           ) : (

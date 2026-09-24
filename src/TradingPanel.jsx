@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { parseContract } from './contracts'
 import { apiFetch } from './api'
+import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE, useMarketState, IndexStatus } from './orderAlerts'
 
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 8px', width: 90 }
@@ -15,6 +16,8 @@ function profitColor(v) {
 export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const prefix = market === 'crypto' ? '/api/crypto/trading' : '/api/trading'
   const [data, setData] = useState(null)
+  const alerts = useAlerts()
+  const marketState = useMarketState(market)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -221,15 +224,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="checkbox" checked={!!config.NIFTY} onChange={(e) => setConfig({ ...config, NIFTY: e.target.checked })} />
-                Trade NIFTY
+                Trade NIFTY <IndexStatus name="NIFTY" state={marketState} alerts={alerts} />
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="checkbox" checked={!!config.BANKNIFTY} onChange={(e) => setConfig({ ...config, BANKNIFTY: e.target.checked })} />
-                Trade BANKNIFTY
+                Trade BANKNIFTY <IndexStatus name="BANKNIFTY" state={marketState} alerts={alerts} />
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="checkbox" checked={!!config.SENSEX} onChange={(e) => setConfig({ ...config, SENSEX: e.target.checked })} />
-                Trade SENSEX
+                Trade SENSEX <IndexStatus name="SENSEX" state={marketState} alerts={alerts} />
               </label>
             </>
           )}
@@ -237,11 +240,11 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
             <>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="checkbox" checked={!!config.BTCUSD} onChange={(e) => setConfig({ ...config, BTCUSD: e.target.checked })} />
-                Trade BTC
+                Trade BTC <IndexStatus name="BTC" state={marketState} alerts={alerts} />
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="checkbox" checked={!!config.ETHUSD} onChange={(e) => setConfig({ ...config, ETHUSD: e.target.checked })} />
-                Trade ETH
+                Trade ETH <IndexStatus name="ETH" state={marketState} alerts={alerts} />
               </label>
             </>
           )}
@@ -296,8 +299,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 {data.storeorder.map((o) => {
                   const edit = orderEdits[o.symbol] || { stoplosspoint: o.stoplosspoint, targetpoint: o.targetpoint }
                   const busy = savingOrder === o.symbol || savingOrder === '__all__'
+                  // Entry time of this symbol's newest trade in today's history, so
+                  // alerts from an earlier position on the same symbol don't show.
+                  const since = (data.fetchdata || []).filter((t) => t.script === o.symbol).map((t) => t.createddate).sort().at(-1)
+                  // Only open positions, and only the newest alert.
+                  const oAlert = o.orderterm === 'hold' ? latestOrderAlert(alerts, o.symbol, since) : null
+                  const hi = oAlert ? ORDER_ALERT_STYLE[oAlert.kind].color : null
                   return (
-                    <tr key={o.symbol}>
+                    <Fragment key={o.symbol}>
+                    <tr style={hi ? { background: `${hi}1f`, boxShadow: `inset 3px 0 0 ${hi}` } : undefined}>
                       <td style={td}>{o.symbol}</td>
                       <td style={td}>{o.orderstatus}</td>
                       <td style={td}>{o.orderterm}</td>
@@ -332,6 +342,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                         </button>
                       </td>
                     </tr>
+                    {oAlert && (
+                      <tr style={{ background: `${hi}14` }}>
+                        <td style={td} colSpan={11}><OrderAlert alert={oAlert} /></td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>

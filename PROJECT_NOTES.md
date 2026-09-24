@@ -267,3 +267,10 @@ users at last check. Machine uptime is 12+ days — no OS-level restart has
 occurred; state drift is entirely from manual starts/stops across this
 session. Re-run the smoke test after bringing things back up to get a true
 current picture rather than trusting this paragraph.
+Index status for everyone (added 2026-09-24): each analyst cycle also overwrites
+`~/tradingview-analysis/{india,crypto}_market_state.json` (per index: state SIDEWAYS/TRENDING_UP/
+TRENDING_DOWN/MIXED, outlook label/text, delayed flag). `GET /api/market-state?market=` serves it to
+any logged-in user (market data, not account data); the Trading panel shows it beside each index
+checkbox with that index's newest market alert today. Order alerts (ORDER_*) show only on OPEN
+positions, newest one only, in the Trading order table and the chart's Pending-order box
+(`src/orderAlerts.jsx`).

@@ -516,6 +516,33 @@ def admin_alerts(limit: int = 300, admin=Depends(auth.require_admin)):
 # symbols enabled in THEIR OWN account, india or crypto. Same shape as /api/admin/alerts,
 # just filtered, so the same Alerts.jsx renders both. Uses get_effective_user so an admin
 # "acting as" someone sees that user's alerts, same as every other trading route already does.
+# Current per-index state (SIDEWAYS / TRENDING_UP / ... + outlook) from analyst.py's latest
+# cycle, for the index checkboxes in the Trading panel. Market data, not account data,
+# so any logged-in user may read it (the full report stays admin-only).
+@app.get("/api/market-state")
+def market_state(market: str = "india", user=Depends(auth.get_current_user)):
+    if market not in ("india", "crypto"):
+        raise HTTPException(400, "market must be india or crypto")
+    try:
+        data = json.loads((ANALYSIS_DIR / f"{market}_market_state.json").read_text())
+    except (OSError, ValueError):
+        data = {"ts": None, "symbols": {}}
+    # Newest market alert today per index, for EVERY index (ticked or not) — /api/alerts
+    # only returns alerts for the user's enabled symbols, which is right for the Alerts
+    # tab but hid them from unticked checkboxes here.
+    today = datetime.now().strftime("%Y-%m-%d")
+    for line in _tail_lines(ANALYSIS_DIR / "alerts.jsonl", 2000) or []:
+        try:
+            al = json.loads(line)
+        except ValueError:
+            continue
+        if al.get("user") is None and al.get("market") == market and al.get("ts", "") >= today:
+            sym = data["symbols"].setdefault(al.get("symbol"), {})
+            if al["ts"] > sym.get("alert", {}).get("ts", ""):
+                sym["alert"] = al
+    return {"success": True, **data}
+
+
 @app.get("/api/alerts")
 def my_alerts(limit: int = 300, user=Depends(get_effective_user)):
     username = user["username"]

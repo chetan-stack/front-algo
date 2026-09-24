@@ -138,7 +138,7 @@ def analyze(bars):
     else:
         state = "MIXED"
     return {
-        "price": c[-1], "move3": move3, "atr": a1, "er": er, "state": state, "ema_up": up,
+        "price": c[-1], "move3": move3, "atr": a1, "er": er, "state": state, "ema_up": up, "net30": c[-1] - c[-31],
         "open_chg_pct": (c[-1] / bars[0][1] - 1) * 100,
         "big_move": a1 > 0 and abs(move3) > 3 * a1,
         "building": ("UP" if up else "DOWN") if crossed and state != "SIDEWAYS" else None,
@@ -224,6 +224,35 @@ def outlook(a, levels, atrs):
     if a["state"] == "TRENDING_DOWN" and S and out["dS"] < 1:
         return {**out, "label": "TREND_LIMITED", "text": f"trending down but only {out['dS']:.1f} ATR to strong support {S['price']:,.0f}"}
     return {**out, "label": "TREND" if a["state"].startswith("TREND") else "MIXED", "text": ""}
+
+
+def explain(a, ol):
+    """Plain-English reasons behind the state/outlook, for the app's index tooltip."""
+    up30, why = a["net30"] >= 0, []
+    trend = {"TRENDING_UP": "Uptrend", "TRENDING_DOWN": "Downtrend", "SIDEWAYS": "Sideways", "MIXED": "Mixed / no clear trend"}[a["state"]]
+    why.append(f"{trend}: last 30 min moved {a['net30']:+.1f} pts net, efficiency {a['er']:.2f} "
+               f"(below 0.25 = choppy, 0.45+ = clean trend)")
+    if a["state"] == "SIDEWAYS":
+        why.append("Price is going back and forth - most of the movement cancels out, so no direction to trade")
+    elif a["state"] == "MIXED":
+        why.append("Moving, but not cleanly enough for a trend (efficiency 0.25-0.45)" if a["er"] < 0.45
+                   else f"Moved {'up' if up30 else 'down'} cleanly, but EMA9/20 still points {'up' if a['ema_up'] else 'down'} - signals disagree")
+    else:
+        why.append(f"Moved {'up' if up30 else 'down'} steadily AND EMA9 is {'above' if a['ema_up'] else 'below'} EMA20 - both agree")
+    why.append(f"EMA9 {'above' if a['ema_up'] else 'below'} EMA20 - short-term momentum {'up' if a['ema_up'] else 'down'}")
+    if a["building"]:
+        why.append(f"EMA9/20 crossed {a['building'].lower()} in the last 5 min - a new {a['building'].lower()}trend may be starting")
+    why.append(f"Last 3 min {a['move3']:+.1f} pts (ATR {a['atr']:.1f})" + (" - BIG MOVE" if a["big_move"] else ""))
+    why.append(f"Day change {a['open_chg_pct']:+.2f}%")
+    for key, d, name in (("R", "dR", "resistance"), ("S", "dS", "support")):
+        lv = ol.get(key)
+        if lv:
+            why.append(f"Strong {name} {lv['price']:,.0f} ({'+'.join(lv['tfs'])}), {ol[d]:.1f} ATR away")
+    if ol.get("text"):
+        why.append(f"Outlook {ol['label']}: {ol['text']}")
+    if a["age_min"] > STALE_MIN:
+        why.append(f"Data is {a['age_min']:.0f} min delayed - treat as levels only, not a live signal")
+    return why
 
 
 def level_line(ol):
@@ -504,6 +533,7 @@ def cycle(mk):
         prune_alerts(now)
         st["acct"], st["day"] = None, today
     lines, idx = [f"=== {now:%Y-%m-%d %H:%M} IST ==="], {}
+    states = {}  # current per-index state for the app's index checkboxes (market_state.json)
     for name, sym in mk["symbols"].items():
         try:
             bars = fetch(mk["fetch"], sym, "1m")
@@ -547,6 +577,9 @@ def cycle(mk):
             if a["big_move"]:
                 emit(mk, name, "BIG_MOVE", f"{a['move3']:+.1f} points in 3 minutes at {a['price']:,.2f}", lines)
         st["last"][name] = cur
+        states[name] = {"state": a["state"], "price": round(a["price"], 2), "er": round(a["er"], 2),
+                        "delayed": a["age_min"] > STALE_MIN, "label": ol["label"], "text": ol["text"],
+                        "why": explain(a, ol)}
     flagged = set()
     try:
         rows, findings = check_accounts(mk, idx)
@@ -576,6 +609,12 @@ def cycle(mk):
     st["alerts"] = flagged
     text = "\n".join(lines) + "\n\n"
     mk["log"].parent.mkdir(parents=True, exist_ok=True)
+    # Latest state only (overwritten every cycle) — /api/market-state serves it to every user,
+    # unlike the admin-only report. tmp + replace so a reader never sees a half-written file.
+    state_file = mk["log"].parent / f"{mk['key']}_market_state.json"
+    tmp = state_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"ts": f"{now:%Y-%m-%d %H:%M:%S}", "symbols": states}))
+    os.replace(tmp, state_file)
     with open(mk["log"], "a") as f:  # ~230KB per market day; older days are pruned at the first cycle of each new day
         f.write(text)
     return text
