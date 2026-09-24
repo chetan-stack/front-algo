@@ -9,6 +9,7 @@ it. After a real restart, run `./start.sh` (app) yourself, then start each
 user's bots via the Admin panel or manually (see `HOW_TO_RUN.txt`). A new
 Claude Code session has no memory of a previous one either — point it at
 this file to get back up to speed instead of re-explaining from scratch.
+**`WORK_LOG.md`** has the per-session handoff (what changed, which branch, what's pending).
 
 ## Architecture
 
