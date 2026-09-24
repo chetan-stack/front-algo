@@ -291,5 +291,8 @@ the broker. Live entries: guards first (dashboard "Stop new live trades" = `live
 confirmation (broker qty/avg price recorded), then a STOPLOSS_LIMIT sell at the broker (trigger = fill -
 stoploss points, kept in sync by store_exit). Exits cancel the SL and sell the broker's net qty; an SL filled
 at the broker or a close in the AngelOne app closes the record. Live positions square off at 15:10. Live
-option selling is blocked. Before going live: `cd SmartApi && ../venv/bin/python live_preflight.py`
+option selling is hedged only: the hedge BUY is confirmed before the short SELL (hedge sold back if the short
+doesn't fill), the pair is recorded together (`hedge_pos_id`, not "short id - 1"), a STOPLOSS_LIMIT BUY sits
+at the broker for the short, and exits cover the short first and only then sell the hedge (a failed hedge sale
+is retried every exit tick, status `hedge_open`). Unhedged live selling is refused. Before going live: `cd SmartApi && ../venv/bin/python live_preflight.py`
 (read-only), then a supervised 1-lot test. Tests: `test_live_trade.py` (fake broker), `test_paper_unchanged.py`.
