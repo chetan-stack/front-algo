@@ -39,6 +39,40 @@ export default function App() {
   const view = panes[0]
   const setView = (v) => setPanes((p) => [v, ...p.slice(1)])
   const setPaneView = (i, v) => setPanes((p) => p.map((x, j) => (j === i ? v : x)))
+  // Per screen, per market: the chart's symbol/label/interval/live, reported by
+  // each Chart and saved with presets. layoutVersion remounts charts on preset
+  // open so they start from the saved state.
+  const [paneCharts, setPaneCharts] = useState([{}, {}, {}, {}])
+  const [layoutVersion, setLayoutVersion] = useState(0)
+  const setPaneChart = (i, market, st) => setPaneCharts((p) => p.map((x, j) => (j === i ? { ...x, [market]: st } : x)))
+  // Saved screen layouts ("custom tabs"): screen count + which tab each
+  // screen shows. Per browser (localStorage), so localhost and the live site
+  // keep separate lists. ponytail: move to the backend if presets must follow
+  // the user across devices.
+  const [presets, setPresets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('screenPresets') || '[]') } catch { return [] }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('screenPresets', JSON.stringify(presets)) } catch { /* storage blocked */ }
+  }, [presets])
+  const activePreset = presets.find((pr) => pr.count === count && pr.panes.every((v, i) => panes[i] === v))
+
+  function savePreset() {
+    const name = window.prompt('Name this screen layout', activePreset?.name || '')?.trim()
+    if (!name) return
+    setPresets((all) => [...all.filter((pr) => pr.name !== name), { name, count, panes: panes.slice(0, count), charts: paneCharts.slice(0, count) }])
+  }
+
+  function openPreset(pr) {
+    setCount(pr.count)
+    setPanes((p) => [...pr.panes, ...p.slice(pr.panes.length)])
+    if (pr.charts) setPaneCharts((p) => [...pr.charts, ...p.slice(pr.charts.length)])
+    setLayoutVersion((n) => n + 1)
+  }
+
+  function deletePreset(name) {
+    if (window.confirm(`Delete layout "${name}"?`)) setPresets((all) => all.filter((pr) => pr.name !== name))
+  }
   const [jump, setJump] = useState(null)
   const [unseenAlerts, setUnseenAlerts] = useState(0)
   const { cols, rows } = LAYOUTS[count]
@@ -121,12 +155,14 @@ export default function App() {
     if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
     return (
       <div style={{ flex: 1, minHeight: 0 }}><Chart
-        key={`${market}-${i}`}
+        key={`${market}-${i}-${layoutVersion}`}
         market={market}
         defaultSymbol={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
         defaultLabel={market === 'crypto' ? 'BINANCE:BTCUSDT' : 'NSE:NIFTY'}
         jump={i === 0 ? jump : null}
         onJumpConsumed={i === 0 ? () => setJump(null) : undefined}
+        initial={paneCharts[i]?.[market]}
+        onStateChange={(st) => setPaneChart(i, market, st)}
       /></div>
     )
   }
@@ -152,6 +188,26 @@ export default function App() {
             {n} screen{n === '1' ? '' : 's'}
           </button>
         ))}
+        {presets.map((pr) => (
+          <button
+            key={pr.name}
+            onClick={() => openPreset(pr)}
+            className={`tab-btn${activePreset?.name === pr.name ? ' active' : ''}`}
+            title={`${pr.count} screen${pr.count === 1 ? '' : 's'}: ${pr.panes.join(', ')}`}
+          >
+            ★ {pr.name}
+            <span
+              role="button" aria-label={`Delete layout ${pr.name}`}
+              onClick={(e) => { e.stopPropagation(); deletePreset(pr.name) }}
+              style={{ marginLeft: 6, color: '#787b86' }}
+            >
+              ✕
+            </span>
+          </button>
+        ))}
+        <button onClick={savePreset} className="tab-btn" title="Save the current screens as a layout">
+          + Save layout
+        </button>
         <button onClick={logout} className="tab-btn tab-bar-spacer" style={{ color: '#787b86' }}>
           Log out
         </button>

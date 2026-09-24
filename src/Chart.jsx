@@ -79,19 +79,26 @@ function computeLevels(order) {
   return { entry, target: isBuy ? entry + t : entry - t, stoploss: isBuy ? entry - s : entry + s }
 }
 
-export default function Chart({ jump, onJumpConsumed, market = 'india', defaultSymbol = 'NSE:NIFTY', defaultLabel = 'NSE:NIFTY' }) {
+export default function Chart({ jump, onJumpConsumed, market = 'india', defaultSymbol = 'NSE:NIFTY', defaultLabel = 'NSE:NIFTY', initial, onStateChange }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
   const tradingPrefix = market === 'crypto' ? '/api/crypto/trading' : '/api/trading'
-  const [symbol, setSymbol] = useState(defaultSymbol)
-  const [label, setLabel] = useState(defaultLabel)
-  const [interval, setInterval_] = useState('15m')
+  // `initial` restores a saved screen layout; onStateChange reports back so the
+  // layout can be saved (App.jsx presets).
+  const [symbol, setSymbol] = useState(initial?.symbol ?? defaultSymbol)
+  const [label, setLabel] = useState(initial?.label ?? defaultLabel)
+  const [interval, setInterval_] = useState(initial?.interval ?? '15m')
   const [price, setPrice] = useState(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [optionsOnly, setOptionsOnly] = useState(false)
   const [nextClose, setNextClose] = useState(null)
+  // Exchange time minus device time, learned from live ticks, so the candle
+  // countdown follows the exchange clock — a device clock running a minute
+  // slow used to show 2:00 on a 1m chart. 0 (device clock) until a tick arrives.
+  const clockOffsetRef = useRef(0)
+  const lastTickTimeRef = useRef(0)
   const [now, setNow] = useState(() => Date.now() / 1000)
   const [chain, setChain] = useState(null)
   const [chainLoading, setChainLoading] = useState(false)
@@ -133,9 +140,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [showEmaForm, setShowEmaForm] = useState(false)
   const [emaPeriod, setEmaPeriod] = useState('20')
   const emaSeriesRef = useRef({})
-  const [live, setLive] = useState(false)
+  const [live, setLive] = useState(initial?.live ?? false)
   const [liveConnected, setLiveConnected] = useState(false)
   const hasMatchedOrderRef = useRef(false)
+
+  useEffect(() => { onStateChange?.({ symbol, label, interval, live }) }, [symbol, label, interval, live])
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 1000)
@@ -416,6 +425,12 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     }
 
     function applyTick(closePrice, t) {
+      // Only a newer tick moves the offset — a repeated/stale tick (quiet option
+      // contract) would otherwise drag the clock back.
+      if (t > lastTickTimeRef.current) {
+        lastTickTimeRef.current = t
+        clockOffsetRef.current = t - Date.now() / 1000
+      }
       const bar = foldIntoCandle(t, closePrice, closePrice, closePrice, closePrice)
       if (!bar) return
       setNextClose(bar.time + INTERVAL_SECONDS[interval])
@@ -745,7 +760,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
         </button>
         {nextClose != null && (
           <span style={{ color: '#787b86', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
-            {formatCountdown(Math.max(0, Math.round(nextClose - now)))}
+            {formatCountdown(Math.max(0, Math.round(nextClose - (now + clockOffsetRef.current))))}
           </span>
         )}
         <span style={{ color: '#d1d4dc', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
