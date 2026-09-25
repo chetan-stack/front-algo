@@ -53,9 +53,13 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         if (!cancelled) setBroker((b) => ({ ...b, error: e.message, loaded: true }))
       }
     }
+    // AngelOne allows 1 getPosition + 1 getOrderBook per second for the WHOLE
+    // account (bots included); a hidden tab needn't spend any of it.
     poll()
-    const id = setInterval(poll, 8000)
-    return () => { cancelled = true; clearInterval(id) }
+    const id = setInterval(() => { if (!document.hidden) poll() }, 15000)
+    const onVisible = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [brokerMode, prefix])
   const [cryptoResults, setCryptoResults] = useState(null)
   const [cryptoSearchBusy, setCryptoSearchBusy] = useState(false)

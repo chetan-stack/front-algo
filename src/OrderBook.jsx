@@ -44,7 +44,8 @@ export default function OrderBook() {
 
   useEffect(() => {
     if (!autoRefresh) return
-    const id = setInterval(load, 8000)
+    // Shares the account's 1 getOrderBook/second with the bots — skip while hidden.
+    const id = setInterval(() => { if (!document.hidden) load() }, 15000)
     return () => clearInterval(id)
   }, [autoRefresh])
 
@@ -66,7 +67,7 @@ export default function OrderBook() {
         </select>
         <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#787b86' }}>
           <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
-          Auto-refresh (8s)
+          Auto-refresh (15s)
         </label>
         <button
           onClick={load} disabled={busy}
