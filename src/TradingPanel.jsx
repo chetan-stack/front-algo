@@ -149,6 +149,29 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     else setError(d.message)
   }
 
+  // A position placed manually in the AngelOne app -> managed by the bot
+  // (broker stoploss order, target/SL exit, Exit button, chart box, alerts).
+  async function adoptPosition(p) {
+    const sl = data.form_data?.loss_points, tgt = data.form_data?.target_points
+    const intraday = (p.producttype || 'INTRADAY') === 'INTRADAY'
+    if (!confirm(`Let the bot manage ${p.tradingsymbol} (${p.netqty} qty, ${p.producttype})?\n\n` +
+      `• A stoploss order is placed at AngelOne ${sl} pts below your average price\n` +
+      `• The bot exits it at +${tgt} / -${sl} pts${intraday ? ' and at 15:10' : ''}, selling the broker's actual quantity`)) return
+    setSavingOrder(p.tradingsymbol)
+    try {
+      const res = await apiFetch(`${prefix}/adopt-position`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: p.tradingsymbol, product: p.producttype }),
+      })
+      const d = await res.json()
+      if (d.status === 'success') load()
+      else setError(d.message)
+    } catch (e) {
+      setError(e.message)
+    }
+    setSavingOrder(null)
+  }
+
   async function deleteOrder(symbol) {
     if (!confirm(`Remove ${symbol} from the tracked order list? This only affects local tracking data, not any live broker position.`)) return
     setSavingOrder(symbol)
@@ -370,9 +393,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                             )}
                           </td>
                           <td style={td}>
-                            {open && tracked && tracked.orderterm !== 'exit' && (
+                            {open && tracked && tracked.orderterm === 'hold' && (
                               <button onClick={() => exitOrder(p.tradingsymbol)} disabled={busy} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
                                 {busy ? '…' : 'Exit'}
+                              </button>
+                            )}
+                            {open && netqty > 0 && !(tracked && tracked.orderterm === 'hold') && (
+                              <button onClick={() => adoptPosition(p)} disabled={busy} title="Placed manually in the AngelOne app — let the bot manage it"
+                                style={{ ...input, cursor: 'pointer', width: 'auto', borderColor: '#2962ff', color: '#2962ff' }}>
+                                {busy ? '…' : 'Manage'}
                               </button>
                             )}
                           </td>

@@ -1257,6 +1257,13 @@ def trading_delete_order(payload: dict = Body(...), user=Depends(get_effective_u
     return resp.json()
 
 
+@app.post("/api/trading/adopt-position")
+def trading_adopt_position(payload: dict = Body(...), user=Depends(get_effective_user)):
+    # "Manage" on a position placed manually in the AngelOne app (webviewdataapi.adopt_position)
+    resp = requests.post(f"{trading_api(user)}/api/adopt_position", json=payload, timeout=60)
+    return resp.json()
+
+
 @app.post("/api/trading/exit-order")
 def trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{trading_api(user)}/api/exit_order", json=payload, timeout=20)
