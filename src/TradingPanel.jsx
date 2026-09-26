@@ -109,7 +109,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     })
     const d = await res.json()
     setSavingConfig(false)
-    if (d.status === 'success') setConfig(d.form_data)
+    if (d.status === 'success') {
+      setConfig(d.form_data)
+      // crypto: the dashboard lists only the saved "Trade in" instrument — reload
+      // so switching Options <-> Futures shows the right orders/totals at once
+      if (market === 'crypto') load()
+    }
     else setError(d.message)
   }
 
@@ -330,6 +335,9 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                   <option value="options">Options</option>
                   <option value="futures">Futures (perpetual)</option>
                 </select>
+                {(config.instrument || 'options') !== (data.instrument || 'options') && (
+                  <span style={{ fontSize: 11, color: '#f0b90b' }}>Save to switch trading and the dashboard</span>
+                )}
               </label>
               {(config.instrument || 'options') === 'futures' && (
                 <>
@@ -360,8 +368,13 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               clicked separately on this page. Saving on blur closes that gap
               without turning every field here into an autosave. */}
           <label>Lot size <input style={input} value={config.lotsize ?? ''} onChange={(e) => setConfig({ ...config, lotsize: e.target.value })} onBlur={saveConfig} /></label>
-          <label>Target pts <input style={input} value={config.target_points ?? ''} onChange={(e) => setConfig({ ...config, target_points: e.target.value })} /></label>
-          <label>Loss pts <input style={input} value={config.loss_points ?? ''} onChange={(e) => setConfig({ ...config, loss_points: e.target.value })} /></label>
+          {/* crypto futures mode uses its own Futures target/stoploss $ instead */}
+          {!(market === 'crypto' && (config.instrument || 'options') === 'futures') && (
+            <>
+              <label>Target pts <input style={input} value={config.target_points ?? ''} onChange={(e) => setConfig({ ...config, target_points: e.target.value })} /></label>
+              <label>Loss pts <input style={input} value={config.loss_points ?? ''} onChange={(e) => setConfig({ ...config, loss_points: e.target.value })} /></label>
+            </>
+          )}
           <label>Range min <input style={input} value={config.trade_range_min ?? ''} onChange={(e) => setConfig({ ...config, trade_range_min: e.target.value })} /></label>
           <label>Range max <input style={input} value={config.trade_range_max ?? ''} onChange={(e) => setConfig({ ...config, trade_range_max: e.target.value })} /></label>
           <label>Buy/Sell
@@ -378,6 +391,20 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
           )}
         </div>
       </div>
+
+      {market === 'crypto' && data.hidden_open?.length > 0 && (
+        <div style={{ ...box, borderColor: '#f0b90b', fontSize: 13 }}>
+          <div style={{ color: '#f0b90b' }}>
+            Still open from {data.instrument === 'futures' ? 'options' : 'futures'} trading (this page lists {data.instrument || 'options'} only).
+            The exit bot keeps managing {data.hidden_open.length === 1 ? 'it' : 'them'} to target/stoploss:
+          </div>
+          {data.hidden_open.map((h) => (
+            <div key={`${h.symbol}-${h.createddate}`} style={{ color: '#d1d4dc', marginTop: 4 }}>
+              {h.symbol} · {h.lotsize > 0 ? 'long' : 'short'} {Math.abs(h.lotsize)} · entry {h.entry} · since {String(h.createddate).slice(0, 16)}
+            </div>
+          ))}
+        </div>
+      )}
 
       {brokerMode && (
         <div style={box}>
@@ -563,7 +590,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         </div>
       )}
 
-      {market === 'crypto' && (
+      {market === 'crypto' && data.instrument !== 'futures' && (
         <div style={box}>
           <b>Search options contracts</b>
           <div style={{ color: '#787b86', fontSize: 11, marginTop: 2, marginBottom: 8 }}>
