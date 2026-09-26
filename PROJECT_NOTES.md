@@ -297,3 +297,15 @@ doesn't fill), the pair is recorded together (`hedge_pos_id`, not "short id - 1"
 at the broker for the short, and exits cover the short first and only then sell the hedge (a failed hedge sale
 is retried every exit tick, status `hedge_open`). Unhedged live selling is refused. Before going live: `cd SmartApi && ../venv/bin/python live_preflight.py`
 (read-only), then a supervised 1-lot test. Tests: `test_live_trade.py` (fake broker), `test_paper_unchanged.py`.
+
+## Crypto futures mode (2026-09-26, branch live_changes)
+
+Crypto Trading panel → "Trade in: Options / Futures" (`instrument` in auto_trade_crypto.json;
+unset = options, unchanged). Futures: same signals/filters in crypto/stetergy.py; bullish entries
+(buycall/sellput) BUY the coin's DeltaEx India perpetual (BTCUSD id 27, 0.001 BTC/contract; ETHUSD
+id 3136, 0.01 ETH/contract), bearish (buyput/sellcall) SELL it; one futures position per coin;
+`futures_qty` contracts; `futures_target_points` / `futures_loss_points` in USD of the coin's price
+(blank = option points). P&L = move × contracts × contract value (USD). Shorts close with a
+reduce-only BUY. Futures orders send no leverage field → the leverage set per product in the
+DeltaEx account applies (DeltaEx default is 200× — set it before trading live). Tests:
+`cd SmartApi/crypto && ../../venv/bin/python test_crypto_futures.py` (16 checks, offline).
