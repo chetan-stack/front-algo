@@ -97,6 +97,13 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       trade_btcusd: config.BTCUSD,
       trade_ethusd: config.ETHUSD,
     }
+    if (market === 'crypto') {
+      // The Buy/Sell and Trade-in dropdowns SHOW a default when nothing is saved,
+      // but the unset value was sent as-is — buy_or_sell was saved as null and the
+      // crypto strategy (which checks == 'BUY' / 'SELL') never entered at all.
+      payload.buy_or_sell = config.buy_or_sell || 'BUY'
+      payload.instrument = config.instrument || 'options'
+    }
     const res = await apiFetch(`${prefix}/config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })
@@ -314,6 +321,32 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 <input type="checkbox" checked={!!config.ETHUSD} onChange={(e) => setConfig({ ...config, ETHUSD: e.target.checked })} />
                 Trade ETH <IndexStatus name="ETH" state={marketState} alerts={alerts} />
               </label>
+              {/* Same strategy and signals; only the instrument changes. Futures: a
+                  bullish signal buys (long) the coin's perpetual (BTCUSD / ETHUSD), a
+                  bearish one sells it (short); exits and P&L use the futures settings. */}
+              <label>Trade in
+                <select style={{ ...input, width: '100%' }} value={config.instrument || 'options'}
+                  onChange={(e) => setConfig({ ...config, instrument: e.target.value })}>
+                  <option value="options">Options</option>
+                  <option value="futures">Futures (perpetual)</option>
+                </select>
+              </label>
+              {(config.instrument || 'options') === 'futures' && (
+                <>
+                  <label title="Contracts per entry. BTCUSD = 0.001 BTC, ETHUSD = 0.01 ETH per contract.">
+                    Futures contracts <input style={input} value={config.futures_qty ?? ''} placeholder="1"
+                      onChange={(e) => setConfig({ ...config, futures_qty: e.target.value })} />
+                  </label>
+                  <label title="Target: USD move in the coin's price from entry (up for a long, down for a short). Blank = Target pts.">
+                    Futures target $ <input style={input} value={config.futures_target_points ?? ''} placeholder={config.target_points ?? ''}
+                      onChange={(e) => setConfig({ ...config, futures_target_points: e.target.value })} />
+                  </label>
+                  <label title="Stoploss: USD move against the position. Blank = Loss pts.">
+                    Futures stoploss $ <input style={input} value={config.futures_loss_points ?? ''} placeholder={config.loss_points ?? ''}
+                      onChange={(e) => setConfig({ ...config, futures_loss_points: e.target.value })} />
+                  </label>
+                </>
+              )}
             </>
           )}
           <label>Stop loss <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} /></label>

@@ -435,7 +435,8 @@ def check_orders(mk, idx, user, d, cfg, have, enabled, today):
                 add(sym, "ORDER_TRAIL", "trail", f"{pts:+.1f} pts, {pts / target:.0%} of the way to its +{target:g} target: move the stop to entry (break-even) to lock it in{room}",
                     "in profit past half its target: move the stop to entry to lock it in")
         if against:
-            add(sym, "ORDER_WRONG", "trend", f"{'call' if call else 'put'} held against a {a['state'].lower().replace('_', ' ')} {n}")
+            held_as = "long future" if sym in CRYPTO_FUTURES else ("call" if call else "put")
+            add(sym, "ORDER_WRONG", "trend", f"{held_as} held against a {a['state'].lower().replace('_', ' ')} {n}")
         lv, dist = (ol.get("R"), ol.get("dR")) if call else (ol.get("S"), ol.get("dS"))
         if lv and dist is not None and dist < 0.6:
             kind = "resistance" if call else "support"
@@ -630,6 +631,8 @@ def market(key, label, symbols, fetch, log, hours, dir_, cfg, flag, required, sc
                 st={"acct": None, "alerts": set(), "day": None, "last": {}, "open": False, "orders": {}})
 
 
+CRYPTO_FUTURES = {"BTCUSD": "BTC", "ETHUSD": "ETH"}  # DeltaEx perpetuals the crypto bot trades in futures mode
+
 MARKETS = {
     "india": market(
         "india", "India", {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "SENSEX": "^BSESN"}, fetch_yahoo,
@@ -644,8 +647,10 @@ MARKETS = {
         ("buy_or_sell", "lotsize", "target_points", "loss_points", "stop_loss"),
         ("stetergy.py", "stetergy_exit.py"),
         "SELECT username, is_admin FROM users WHERE crypto_port IS NOT NULL ORDER BY is_admin DESC, username",
-        lambda s: s.split("-")[1] if s.count("-") >= 2 else None,
-        lambda s: s.startswith("C-"), lambda s: s.startswith("P-"), "cryptoorderbook"),
+        # options C-/P-<coin>-..., perpetual futures BTCUSD/ETHUSD (crypto "Trade in: Futures");
+        # only long positions are checked, so a long future counts as bullish like a call
+        lambda s: s.split("-")[1] if s.count("-") >= 2 else CRYPTO_FUTURES.get(s),
+        lambda s: s.startswith("C-") or s in CRYPTO_FUTURES, lambda s: s.startswith("P-"), "cryptoorderbook"),
 }
 
 
