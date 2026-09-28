@@ -537,14 +537,15 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   // else the newest (storeorder appends). find() used to grab the stale exited
   // one and draw its entry/target/stoploss/P&L instead.
   // ponytail: two OPEN orders on the same strike+right but different expiries would still collide; match expiry if that ever happens.
-  // crypto futures: the chart is DELTA:BTCUSD / DELTA:ETHUSD, the order's symbol is BTCUSD / ETHUSD
-  const perpetual = market === 'crypto' && Object.hasOwn(CRYPTO_CONTRACT_VALUE, rawSymbol)
+  // crypto futures: the order's symbol is BTCUSD / ETHUSD; its chart is BINANCE:BTCUSDT /
+  // BINANCE:ETHUSDT (View chart) or DELTA:BTCUSD / DELTA:ETHUSD
+  const perpetual = market === 'crypto' ? { BTCUSDT: 'BTCUSD', ETHUSDT: 'ETHUSD', BTCUSD: 'BTCUSD', ETHUSD: 'ETHUSD' }[rawSymbol] : undefined
   const strikeMatches = chartContract
     ? pendingOrders.filter((o) => {
         const oc = normalizeContract(parseContract(o.symbol))
         return oc && oc.underlying === chartContract.underlying && oc.strike === chartContract.strike && oc.right === chartContract.right
       })
-    : perpetual ? pendingOrders.filter((o) => o.symbol === rawSymbol) : []
+    : perpetual ? pendingOrders.filter((o) => o.symbol === perpetual) : []
   const isExited = (o) => String(o.orderterm).toLowerCase() === 'exit'  // crypto wrote 'Exit' / 'exit'
   const matchedOrder = strikeMatches.findLast((o) => !isExited(o)) ?? strikeMatches.at(-1) ?? null
 

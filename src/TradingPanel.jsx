@@ -230,10 +230,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       // chartable — /api/ohlcv, /api/quote, and the live feed all recognize
       // this exact format (server.py's DELTA_OPTION_RE), so no TradingView
       // search/resolution step is needed like india's contracts below.
-      // Futures (BTCUSD / ETHUSD) open DeltaEx's own perpetual chart (DELTA:...),
-      // where the chart draws the position's entry / target / stoploss.
+      // Futures (BTCUSD / ETHUSD) open the Binance spot chart (BINANCE:BTCUSDT /
+      // BINANCE:ETHUSDT), where the chart draws the position's entry / target /
+      // stoploss. Levels are DeltaEx prices, so they can sit a few $ off Binance's.
       if (symbol === 'BTCUSD' || symbol === 'ETHUSD') {
-        onViewOnChart({ symbol: `DELTA:${symbol}`, label: `DELTA:${symbol} — perpetual futures` })
+        const chartSym = `BINANCE:${symbol}T`
+        onViewOnChart({ symbol: chartSym, label: `${chartSym} — ${symbol} futures position` })
         return
       }
       onViewOnChart({ symbol, label: symbol })
