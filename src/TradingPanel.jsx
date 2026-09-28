@@ -87,6 +87,28 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
   useEffect(() => { load() }, [date, month])
 
+  // Crypto: open positions' P&L keeps moving, so refresh orders / trades / totals
+  // every 10s while something is open and this tab is visible. Only `data` is
+  // replaced — the settings form (`config`) is not, so an edit in progress stays.
+  // Needs the crypto dashboard whose page load no longer rewrites the settings
+  // file (its reply carries `instrument`); the older one did, and repeated loads
+  // could wipe the settings. India's page load still saves its settings, so India
+  // is left on manual refresh (a timed save could undo a change the bot just made).
+  const autoRefresh = market === 'crypto' && data?.instrument !== undefined &&
+    (data?.storeorder || []).some((o) => term(o) === 'hold')
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(async () => {
+      if (document.hidden) return
+      try {
+        const params = new URLSearchParams({ date, month })
+        const d = await (await apiFetch(`${prefix}/dashboard?${params}`)).json()
+        if (d.status === 'success') setData(d)
+      } catch { /* backend restarting — next tick */ }
+    }, 10000)
+    return () => clearInterval(id)
+  }, [autoRefresh, date, month, prefix])
+
   async function saveConfig() {
     setSavingConfig(true)
     // update_dashboard_config reads these back under different keys than
