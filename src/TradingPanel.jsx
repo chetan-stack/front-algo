@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { parseContract } from './contracts'
 import { apiFetch } from './api'
 import { fmtPnl } from './pnl'
@@ -96,18 +96,42 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   // is left on manual refresh (a timed save could undo a change the bot just made).
   const autoRefresh = market === 'crypto' && data?.instrument !== undefined &&
     (data?.storeorder || []).some((o) => term(o) === 'hold')
+
+  // Orders / trades / totals only — the settings form (`config`) is left alone.
+  async function refreshOrders() {
+    try {
+      const client = data?.selectclient?.[0]
+      const params = new URLSearchParams({ date, month, ...(client ? { selectclient: client } : {}) })
+      const d = await (await apiFetch(`${prefix}/dashboard?${params}`)).json()
+      if (d.status === 'success') setData(d)
+    } catch { /* backend restarting — next refresh */ }
+  }
+  const refreshRef = useRef(refreshOrders)
+  refreshRef.current = refreshOrders
+
   useEffect(() => {
     if (!autoRefresh) return
-    const id = setInterval(async () => {
-      if (document.hidden) return
-      try {
-        const params = new URLSearchParams({ date, month })
-        const d = await (await apiFetch(`${prefix}/dashboard?${params}`)).json()
-        if (d.status === 'success') setData(d)
-      } catch { /* backend restarting — next tick */ }
-    }, 10000)
+    const id = setInterval(() => { if (!document.hidden) refreshRef.current() }, 10000)
     return () => clearInterval(id)
-  }, [autoRefresh, date, month, prefix])
+  }, [autoRefresh])
+
+  // One-off refresh (India and crypto) when coming back to this browser tab or
+  // window, or when any chart changes symbol / interval / Live (Chart.jsx fires
+  // 'tv:chart-changed', also from another screen of a multi-screen layout) — used
+  // to need a manual refresh. Debounced so a burst of changes is one request.
+  useEffect(() => {
+    let t
+    const soon = () => { clearTimeout(t); t = setTimeout(() => { if (!document.hidden) refreshRef.current() }, 400) }
+    document.addEventListener('visibilitychange', soon)
+    window.addEventListener('focus', soon)
+    window.addEventListener('tv:chart-changed', soon)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('visibilitychange', soon)
+      window.removeEventListener('focus', soon)
+      window.removeEventListener('tv:chart-changed', soon)
+    }
+  }, [])
 
   async function saveConfig() {
     setSavingConfig(true)

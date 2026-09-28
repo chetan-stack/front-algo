@@ -150,7 +150,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const hasMatchedOrderRef = useRef(false)
   const alerts_ = useAlerts()
 
-  useEffect(() => { onStateChange?.({ symbol, label, interval, live }) }, [symbol, label, interval, live])
+  useEffect(() => {
+    onStateChange?.({ symbol, label, interval, live })
+    // lets an open Trading panel (this or another screen) refresh its orders / P&L
+    window.dispatchEvent(new CustomEvent('tv:chart-changed', { detail: { symbol, interval, live, market } }))
+  }, [symbol, label, interval, live])
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 1000)
