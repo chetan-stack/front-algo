@@ -27,6 +27,9 @@ DELTA_WS_URL = "wss://socket.india.deltaex.org"
 SYMBOL_MAP = {
     "BTCUSDT": "BTCUSD",
     "ETHUSDT": "ETHUSD",
+    # DELTA:BTCUSD / DELTA:ETHUSD — the perpetuals' own charts (crypto futures "View chart")
+    "BTCUSD": "BTCUSD",
+    "ETHUSD": "ETHUSD",
 }
 
 # Option contract symbols (e.g. "C-BTC-79800-290826") are already Delta's own

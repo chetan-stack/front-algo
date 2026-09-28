@@ -13,6 +13,8 @@ const EMA_COLORS = ['#2962ff', '#ff6d00', '#00c853', '#e91e63', '#9c27b0', '#00b
 // Same underlyings the ai_order_service.py backend supports (its `fochange` map) —
 // placing/exiting an order for anything else will just 400 server-side.
 const TRADEABLE_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX']
+// DeltaEx India perpetuals the crypto bot trades in futures mode: coin per contract
+const CRYPTO_CONTRACT_VALUE = { BTCUSD: 0.001, ETHUSD: 0.01 }
 
 function computeEMA(candles, period) {
   const k = 2 / (period + 1)
@@ -76,7 +78,10 @@ function computeLevels(order) {
   const entry = order.entryPrice
   const t = Number(order.targetpoint)
   const s = Number(order.stoplosspoint)
-  const isBuy = order.trend === 'buy'
+  // Direction from the signed qty when there is one (crypto futures shorts are
+  // stored with trend 'buy'); an exited order (qty 0) falls back to trend as before.
+  const lots = Number(order.lotsize)
+  const isBuy = lots ? lots > 0 : order.trend === 'buy'
   return { entry, target: isBuy ? entry + t : entry - t, stoploss: isBuy ? entry - s : entry + s }
 }
 
@@ -532,17 +537,20 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   // else the newest (storeorder appends). find() used to grab the stale exited
   // one and draw its entry/target/stoploss/P&L instead.
   // ponytail: two OPEN orders on the same strike+right but different expiries would still collide; match expiry if that ever happens.
+  // crypto futures: the chart is DELTA:BTCUSD / DELTA:ETHUSD, the order's symbol is BTCUSD / ETHUSD
+  const perpetual = market === 'crypto' && Object.hasOwn(CRYPTO_CONTRACT_VALUE, rawSymbol)
   const strikeMatches = chartContract
     ? pendingOrders.filter((o) => {
         const oc = normalizeContract(parseContract(o.symbol))
         return oc && oc.underlying === chartContract.underlying && oc.strike === chartContract.strike && oc.right === chartContract.right
       })
-    : []
-  const matchedOrder = strikeMatches.findLast((o) => o.orderterm !== 'exit') ?? strikeMatches.at(-1) ?? null
+    : perpetual ? pendingOrders.filter((o) => o.symbol === rawSymbol) : []
+  const isExited = (o) => String(o.orderterm).toLowerCase() === 'exit'  // crypto wrote 'Exit' / 'exit'
+  const matchedOrder = strikeMatches.findLast((o) => !isExited(o)) ?? strikeMatches.at(-1) ?? null
 
   useEffect(() => { hasMatchedOrderRef.current = !!matchedOrder }, [matchedOrder])
   // Only an OPEN position gets its analyst alert, and only the newest one.
-  const matchedAlert = matchedOrder && matchedOrder.orderterm !== 'exit' ? latestOrderAlert(alerts_, matchedOrder.symbol, matchedOrder.createdAt) : null
+  const matchedAlert = matchedOrder && !isExited(matchedOrder) ? latestOrderAlert(alerts_, matchedOrder.symbol, matchedOrder.createdAt) : null
 
   // The backend's stored `profit` is a snapshot (0/stale) until the order is
   // actually exited — it isn't recomputed against current LTP while open. So
@@ -550,8 +558,11 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   // exit ((ltp - entry) * lotsize) from `price`, which already tracks the
   // live tick feed above; once exited, the backend's final rupee figure is
   // the authoritative number and there's no more live price to derive from.
-  const livePnlPoints = matchedOrder && matchedOrder.orderterm !== 'exit' && matchedOrder.entryPrice != null && price != null && matchedOrder.lotsize
-    ? (matchedOrder.trend === 'buy' ? price - matchedOrder.entryPrice : matchedOrder.entryPrice - price) * matchedOrder.lotsize
+  const livePnlPoints = matchedOrder && !isExited(matchedOrder) && matchedOrder.entryPrice != null && price != null && matchedOrder.lotsize
+    ? (market === 'crypto'
+        // crypto: signed qty (short < 0) x contract value -> USD for futures, like the bot's P&L
+        ? (price - matchedOrder.entryPrice) * matchedOrder.lotsize * (CRYPTO_CONTRACT_VALUE[matchedOrder.symbol] ?? 1)
+        : (matchedOrder.trend === 'buy' ? price - matchedOrder.entryPrice : matchedOrder.entryPrice - price) * matchedOrder.lotsize)
     : null
 
   useEffect(() => {
@@ -1022,8 +1033,8 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
             <button onClick={saveOrderEdit} disabled={orderBusy} style={{ flex: 1, background: '#2a2e39', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 0', cursor: 'pointer' }}>
               {orderBusy ? '…' : 'Save'}
             </button>
-            <button onClick={exitMatchedOrder} disabled={orderBusy || matchedOrder.orderterm === 'exit'} style={{ flex: 1, background: 'transparent', color: '#ef5350', border: '1px solid #ef5350', borderRadius: 4, padding: '4px 0', cursor: 'pointer' }}>
-              {matchedOrder.orderterm === 'exit' ? 'Exited' : 'Exit'}
+            <button onClick={exitMatchedOrder} disabled={orderBusy || isExited(matchedOrder)} style={{ flex: 1, background: 'transparent', color: '#ef5350', border: '1px solid #ef5350', borderRadius: 4, padding: '4px 0', cursor: 'pointer' }}>
+              {isExited(matchedOrder) ? 'Exited' : 'Exit'}
             </button>
           </div>
         </div>

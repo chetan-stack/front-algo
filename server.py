@@ -974,6 +974,14 @@ def fetch(symbol: str, resolution: str, n_bars: int):
 # API instead of fetch()/TvDatafeed — same public data crypto/stetergy.py
 # already reads directly, no login needed.
 DELTA_OPTION_RE = re.compile(r"^[CP]-(BTC|ETH)-\d+-\d{6}$")
+# The crypto bot's futures ("Trade in: Futures") trade DeltaEx's own perpetuals;
+# the chart opens them as DELTA:BTCUSD / DELTA:ETHUSD (their own candles, not Binance's).
+DELTA_PERPETUALS = {"DELTA:BTCUSD": "BTCUSD", "DELTA:ETHUSD": "ETHUSD"}
+
+
+def _delta_symbol(symbol):
+    """DeltaEx symbol to fetch for a chart symbol, or None for everything else."""
+    return symbol if DELTA_OPTION_RE.match(symbol) else DELTA_PERPETUALS.get(symbol)
 DELTA_RESOLUTION_MAP = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "240": "4h", "D": "1d"}
 DELTA_RESOLUTION_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 
@@ -995,8 +1003,8 @@ def _fetch_delta_ohlcv(symbol, resolution, count):
 
 @app.get("/api/ohlcv")
 def ohlcv(symbol: str = "NSE:NIFTY", resolution: str = "1", count: int = 500):
-    if DELTA_OPTION_RE.match(symbol):
-        candles = _fetch_delta_ohlcv(symbol, resolution, count)
+    if _delta_symbol(symbol):
+        candles = _fetch_delta_ohlcv(_delta_symbol(symbol), resolution, count)
         bars = [{"time": c["time"], "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]} for c in candles]
         return {"success": True, "bars": bars}
     df = fetch(symbol, resolution, count)
@@ -1009,8 +1017,8 @@ def ohlcv(symbol: str = "NSE:NIFTY", resolution: str = "1", count: int = 500):
 
 @app.get("/api/quote")
 def quote(symbol: str = "NSE:NIFTY"):
-    if DELTA_OPTION_RE.match(symbol):
-        resp = requests.get(f"https://cdn.india.deltaex.org/v2/tickers/{symbol}", timeout=10)
+    if _delta_symbol(symbol):
+        resp = requests.get(f"https://cdn.india.deltaex.org/v2/tickers/{_delta_symbol(symbol)}", timeout=10)
         result = resp.json().get("result")
         if not result:
             raise HTTPException(502, "no data returned")

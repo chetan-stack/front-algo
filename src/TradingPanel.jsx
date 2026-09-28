@@ -7,6 +7,9 @@ const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '4px 8px', width: 90 }
 const th = { textAlign: 'left', padding: '6px 10px', color: '#787b86', fontWeight: 500, fontSize: 12, borderBottom: '1px solid #2a2e39' }
 const td = { padding: '6px 10px', borderBottom: '1px solid #1e222d' }
+// storeorder 'orderterm' in lower case — the crypto bot wrote 'Hold' / 'Exit' for longs,
+// which hid View chart / Exit for them
+const term = (o) => String(o?.orderterm ?? '').toLowerCase()
 
 function profitColor(v) {
   const n = typeof v === 'string' ? parseFloat(v) : v
@@ -227,6 +230,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       // chartable — /api/ohlcv, /api/quote, and the live feed all recognize
       // this exact format (server.py's DELTA_OPTION_RE), so no TradingView
       // search/resolution step is needed like india's contracts below.
+      // Futures (BTCUSD / ETHUSD) open DeltaEx's own perpetual chart (DELTA:...),
+      // where the chart draws the position's entry / target / stoploss.
+      if (symbol === 'BTCUSD' || symbol === 'ETHUSD') {
+        onViewOnChart({ symbol: `DELTA:${symbol}`, label: `DELTA:${symbol} — perpetual futures` })
+        return
+      }
       onViewOnChart({ symbol, label: symbol })
       return
     }
@@ -466,12 +475,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                             )}
                           </td>
                           <td style={td}>
-                            {open && tracked && tracked.orderterm === 'hold' && (
+                            {open && tracked && term(tracked) === 'hold' && (
                               <button onClick={() => exitOrder(p.tradingsymbol)} disabled={busy} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
                                 {busy ? '…' : 'Exit'}
                               </button>
                             )}
-                            {open && netqty > 0 && !(tracked && tracked.orderterm === 'hold') && (
+                            {open && netqty > 0 && !(tracked && term(tracked) === 'hold') && (
                               <button onClick={() => adoptPosition(p)} disabled={busy} title="Placed manually in the AngelOne app — let the bot manage it"
                                 style={{ ...input, cursor: 'pointer', width: 'auto', borderColor: '#2962ff', color: '#2962ff' }}>
                                 {busy ? '…' : 'Manage'}
@@ -550,7 +559,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                   // alerts from an earlier position on the same symbol don't show.
                   const since = (data.fetchdata || []).filter((t) => t.script === o.symbol).map((t) => t.createddate).sort().at(-1)
                   // Only open positions, and only the newest alert.
-                  const oAlert = o.orderterm === 'hold' ? latestOrderAlert(alerts, o.symbol, since) : null
+                  const oAlert = term(o) === 'hold' ? latestOrderAlert(alerts, o.symbol, since) : null
                   const hi = oAlert ? ORDER_ALERT_STYLE[oAlert.kind].color : null
                   return (
                     <Fragment key={o.symbol}>
@@ -567,7 +576,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                         <input style={input} value={edit.targetpoint} onChange={(e) => setOrderEdits({ ...orderEdits, [o.symbol]: { ...edit, targetpoint: e.target.value } })} />
                       </td>
                       <td style={td}>
-                        {o.orderterm === 'hold' && (
+                        {term(o) === 'hold' && (
                           <button onClick={() => viewOnChart(o.symbol)} disabled={chartLoading === o.symbol} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
                             {chartLoading === o.symbol ? '…' : 'View chart'}
                           </button>
@@ -579,8 +588,8 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                         </button>
                       </td>
                       <td style={td}>
-                        <button onClick={() => exitOrder(o.symbol)} disabled={busy || o.orderterm === 'exit'} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
-                          {o.orderterm === 'exit' ? 'Exited' : 'Exit'}
+                        <button onClick={() => exitOrder(o.symbol)} disabled={busy || term(o) === 'exit'} style={{ ...input, cursor: 'pointer', width: 'auto' }}>
+                          {term(o) === 'exit' ? 'Exited' : 'Exit'}
                         </button>
                       </td>
                       <td style={td}>
