@@ -101,8 +101,9 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       // The Buy/Sell and Trade-in dropdowns SHOW a default when nothing is saved,
       // but the unset value was sent as-is — buy_or_sell was saved as null and the
       // crypto strategy (which checks == 'BUY' / 'SELL') never entered at all.
-      payload.buy_or_sell = config.buy_or_sell || 'BUY'
       payload.instrument = config.instrument || 'options'
+      payload.buy_or_sell = config.buy_or_sell || 'BUY'
+      if (payload.instrument === 'options' && payload.buy_or_sell === 'BOTH') payload.buy_or_sell = 'BUY'  // BOTH is futures-only
     }
     const res = await apiFetch(`${prefix}/config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -377,11 +378,23 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
           )}
           <label>Range min <input style={input} value={config.trade_range_min ?? ''} onChange={(e) => setConfig({ ...config, trade_range_min: e.target.value })} /></label>
           <label>Range max <input style={input} value={config.trade_range_max ?? ''} onChange={(e) => setConfig({ ...config, trade_range_max: e.target.value })} /></label>
-          <label>Buy/Sell
-            <select style={{ ...input, width: '100%' }} value={config.buy_or_sell ?? 'BUY'} onChange={(e) => setConfig({ ...config, buy_or_sell: e.target.value })}>
-              <option>BUY</option><option>SELL</option>
-            </select>
-          </label>
+          {market === 'crypto' && (config.instrument || 'options') === 'futures' ? (
+            // Futures: which directions to trade. BOTH = long on bullish + short on bearish signals.
+            <label>Buy/Sell
+              <select style={{ ...input, width: '100%' }} value={config.buy_or_sell || 'BUY'} onChange={(e) => setConfig({ ...config, buy_or_sell: e.target.value })}>
+                <option value="BUY">BUY — longs only</option>
+                <option value="SELL">SELL — shorts only</option>
+                <option value="BOTH">BOTH — long + short</option>
+              </select>
+            </label>
+          ) : (
+            <label>Buy/Sell
+              {/* options have no BOTH; a BOTH saved while in futures shows (and saves) as BUY here */}
+              <select style={{ ...input, width: '100%' }} value={config.buy_or_sell === 'BOTH' ? 'BUY' : (config.buy_or_sell ?? 'BUY')} onChange={(e) => setConfig({ ...config, buy_or_sell: e.target.value })}>
+                <option>BUY</option><option>SELL</option>
+              </select>
+            </label>
+          )}
           {market === 'india' && (
             <label>Side
               <select style={{ ...input, width: '100%' }} value={config.buy_or_sell_side ?? 'BOTH'} onChange={(e) => setConfig({ ...config, buy_or_sell_side: e.target.value })}>
