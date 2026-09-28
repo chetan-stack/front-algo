@@ -4,6 +4,7 @@ import { parseContract, normalizeContract } from './contracts'
 import AiChat from './AiChat'
 import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE } from './orderAlerts'
 import { API, apiFetch } from './api'
+import { CRYPTO_CONTRACT_VALUE, fmtPnl } from './pnl'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d']
 const RESOLUTION = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' }
@@ -13,8 +14,6 @@ const EMA_COLORS = ['#2962ff', '#ff6d00', '#00c853', '#e91e63', '#9c27b0', '#00b
 // Same underlyings the ai_order_service.py backend supports (its `fochange` map) —
 // placing/exiting an order for anything else will just 400 server-side.
 const TRADEABLE_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX']
-// DeltaEx India perpetuals the crypto bot trades in futures mode: coin per contract
-const CRYPTO_CONTRACT_VALUE = { BTCUSD: 0.001, ETHUSD: 0.01 }
 
 function computeEMA(candles, period) {
   const k = 2 / (period + 1)
@@ -621,7 +620,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       // button previously gave no feedback at all when that happened, so a
       // failed exit looked identical to a successful one: nothing changed.
       pushToast(d.status === 'success'
-        ? `Exited: ${matchedOrder.symbol} @ ${d.exitPrice} (P/L ${Math.round(d.profit)})`
+        ? `Exited: ${matchedOrder.symbol} @ ${d.exitPrice} (P/L ${fmtPnl(d.profit, market, matchedOrder.symbol)})`
         : `Exit failed: ${d.message}`)
     } catch {
       pushToast('Exit failed: could not reach order server')
@@ -670,7 +669,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       })
       const d = await res.json()
       pushToast(d.status === 'success'
-        ? `${d.orderId === 1 ? '📝 paper' : '💰 live'} exit: ${d.symbol} @ ${d.exitPrice} (P/L ${Math.round(d.profit)})`
+        ? `${d.orderId === 1 ? '📝 paper' : '💰 live'} exit: ${d.symbol} @ ${d.exitPrice} (P/L ${fmtPnl(d.profit, market, d.symbol)})`
         : `Exit failed: ${d.message}`)
       if (d.status === 'success') loadPendingOrders()
     } catch {
@@ -1003,7 +1002,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ color: '#787b86' }}>P&amp;L {livePnlPoints != null ? '(live)' : ''}</span>
             <b style={{ color: profitColor(livePnlPoints ?? matchedOrder.profit) }}>
-              {Math.round(livePnlPoints ?? matchedOrder.profit)}
+              {fmtPnl(livePnlPoints ?? matchedOrder.profit, market, matchedOrder.symbol)}
             </b>
           </div>
           {matchedAlert && <div style={{ marginBottom: 8 }}><OrderAlert alert={matchedAlert} /></div>}

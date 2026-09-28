@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { parseContract } from './contracts'
 import { apiFetch } from './api'
+import { fmtPnl } from './pnl'
 import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE, useMarketState, IndexStatus } from './orderAlerts'
 
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
@@ -570,7 +571,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                       <td style={td}>{o.orderstatus}</td>
                       <td style={td}>{o.orderterm}</td>
                       <td style={td}>{o.trend}</td>
-                      <td style={{ ...td, color: profitColor(o.profit) }}>{Math.round(o.profit)}</td>
+                      <td style={{ ...td, color: profitColor(o.profit) }}>{fmtPnl(o.profit, market, o.symbol)}</td>
                       <td style={td}>
                         <input style={input} value={edit.stoplosspoint} onChange={(e) => setOrderEdits({ ...orderEdits, [o.symbol]: { ...edit, stoplosspoint: e.target.value } })} />
                       </td>
@@ -751,7 +752,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                     <td style={td}>{t.trailing_stoploss_price}</td>
                     <td style={td}>{t.target_price}</td>
                     <td style={td}>{t.max_price_achieved}</td>
-                    <td style={{ ...td, color: profitColor(t.profit) }}>{typeof t.profit === 'number' ? t.profit.toFixed(2) : t.profit}</td>
+                    <td style={{ ...td, color: profitColor(t.profit) }}>{typeof t.profit === 'number' ? (market === 'crypto' ? fmtPnl(t.profit, market, t.script) : t.profit.toFixed(2)) : t.profit}</td>
                     <td style={td}>{t.createddate}</td>
                   </tr>
                 ))}
