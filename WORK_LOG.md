@@ -17,7 +17,26 @@ pending, so a new session can pick up without the old conversation.
   strategy has NEVER entered since. Saving the crypto config once fixes it.
 - Crypto dashboard follows the saved Trade in: trades/open orders/totals only for that instrument;
   other instrument's open positions listed read-only (hidden_open), still managed by the exit bot.
-- Tests: SmartApi/crypto/test_crypto_futures.py 17/17; India test_all_trading 40/40 (unchanged).
+- 2026-09-28: crypto Buy/Sell gets BOTH. Futures: BUY = longs only, SELL = shorts only, BOTH = long+short
+  (futures+BUY used to trade both directions). Options unchanged. 19/19 crypto checks.
+- 2026-09-28 09:30 BTCUSD futures SHORT id 730 @83241 (paper) not on the dashboard: crypto exit bot
+  crashed every tick on float(None) — option target/loss_points were None (wiped by a dashboard save
+  2026-09-26 12:30) and were read before the futures points. Position unmanaged until the exit bot is
+  restarted with the fix. Fixed: futures use own points, safe reads, one alert + skip if no points;
+  dashboard keeps option points and refuses configs without target+stop for the active mode. 22/22.
+- Crypto View chart (like India): futures open DELTA:BTCUSD/ETHUSD (DeltaEx candles/ticker/live);
+  entry/target/stoploss drawn by signed qty (short: target below); status lower-cased. 23/23.
+- Crypto settings wiped to {'profit'} (Sat 12:29, today 09:18, 10:22): dashboard saved the whole file on
+  every page load, non-atomically; a racing read returned {} and was saved back. Fixed (commit a1f269b):
+  atomic saves, no save on page load, unreadable file never overwritten. Settings restored 10:3x from
+  the dashboard log's last full save (09:54:44) + option points 200/10. NEEDS crypto dashboard restart
+  — the old one (running since Sat) can still wipe until then. 25/25 crypto checks.
+- Frontend: futures View chart opens BINANCE:BTCUSDT/ETHUSDT (user's choice); P&L shown with cents
+  (src/pnl.js fmtPnl; was rounded to 0); Trading panel refreshes itself on tab/window return and on any
+  chart change (India + crypto), plus every 10s for open crypto positions once the new crypto dashboard runs.
+- Crypto manual Exit (chart/panel) failed 'SQLite objects created in a thread...': crete_update_table used an
+  import-time connection from Flask request threads. Fixed: connection per call. 26/26 crypto checks.
+- Tests: SmartApi/crypto/test_crypto_futures.py 26/26; India test_all_trading 40/40 (unchanged).
 - NEEDS: restart crypto dashboard (4101), crypto stetergy/stetergy_exit for each crypto account
   (Admin → Restart), crypto analyst; hard-refresh. Set leverage for BTCUSD/ETHUSD in the DeltaEx
   app before live (default 200×). Set futures target/stoploss $ (blank falls back to option
