@@ -6,6 +6,40 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-09-29 — AI Chat tab + all AI on Claude Code (no OpenAI, no API key)
+
+- New tab **AI Chat** (`src/AiChatTab.jsx`, wired in `src/App.jsx` TABS/renderView) —
+  Claude/ChatGPT-style chat: news (web search), chart explanation, levels, patterns,
+  strategies, India + crypto. Attach/paste a chart screenshot. History in localStorage.
+- Backend `ai_chat.py` (imported in server.py as `claude_ai`): every AI call runs the local
+  **Claude Code CLI** headless (`claude -p`, stream-json, owner's claude.ai Pro login) in an empty
+  temp dir with ONLY WebSearch/WebFetch, no user settings/hooks/MCP — no Bash/Read, so web content
+  can't reach files/broker keys. Max 2 at once (Semaphore), 240s timeout, process killed if the
+  browser leaves.
+  - `POST /api/ai/claude-chat` streams NDJSON (`text`/`status`/`plan`/`error`/`done`). Candles
+    (5m×120 + D×60 from our /api/ohlcv) for symbols named in the question (EXCHANGE:SYM, nifty,
+    bank nifty, sensex, btc, eth) or else the open charts go into the prompt. Claude ends with a
+    ```plan JSON block → held back from the text, sent as a plan card.
+  - Chart panel assistant switched from OpenAI to Claude Code: `/api/ai/chat` (explicit "place
+    order on X" → Claude answers `ORDER {...}` → same ai-enter-option-order as before, now also
+    passes the user correctly) and `/api/ai/analyze` (JSON levels). OPENAI_API_KEY no longer used.
+- Plan card: "Add levels to chart" writes `chartDrawings` (sr + ai-trade) and opens the chart;
+  "Place order…" only for India index option buy_ce/buy_pe → /api/trading/ai-enter-option-order
+  after a confirm(). Claude never places orders from the AI Chat tab.
+- Verified live (before backend restart, run in-process): NIFTY levels question 43s with real
+  candles + plan card; /api/ai/analyze 200 JSON; /api/ai/chat 200.
+- Test: `.venv/bin/python test_ai_chat.py` (offline, Claude Code stubbed).
+- Caveat: runs on the owner's Pro subscription (shared usage limits with his own Claude Code use;
+  a subscription is for personal use — for other users on the dashboard, an API key is the proper route).
+- Later same day: AI Chat tab uses `--model sonnet` (11s vs 43s answers); chart panel keeps the
+  default model. All users can chat; non-admins get 5 AI questions per IST day (chat tab + chart
+  panel share the count), admins unlimited. Counts in `ai_usage.json` (gitignored, resets daily);
+  failed answers are refunded. 429 when over; tab shows "N of 5 left today" (`GET /api/ai/quota`).
+  Limit = `DAILY_LIMIT` in ai_chat.py.
+- NEEDS: backend restart to load it.
+
+---
+
 ## 2026-09-26 — crypto futures mode (crypto only; India untouched)
 
 - Crypto Trading panel "Trade in: Options / Futures" + futures contracts / target $ / stoploss $.

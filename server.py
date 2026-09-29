@@ -19,6 +19,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, We
 from fastapi.middleware.cors import CORSMiddleware
 from tvDatafeed import TvDatafeed, Interval
 
+import ai_chat as claude_ai  # all AI (chat tab + chart assistant) via Claude Code
 import auth
 import crypto_live_feed
 import live_feed
@@ -1384,10 +1385,8 @@ def crypto_trading_pending_orders(user=Depends(get_effective_user)):
 
 # Chat with an AI about the chart on screen: browser sends a screenshot
 # (lightweight-charts' own takeScreenshot(), no client-side rendering lib needed)
-# plus recent candles as text context, this just relays it to OpenAI's vision-capable
-# chat model and returns the reply. Proxied server-side so the API key never reaches
-# the browser.
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+# plus recent candles as text context, this relays it to Claude (via the Claude Code
+# CLI on this machine, see ai_chat.py) and returns the reply.
 AI_SYSTEM_PROMPT = (
     "You are a trading assistant looking at a live chart (screenshot and/or OHLCV data "
     "may be attached), for an Indian index options trader. Reply in under 100 words, "
@@ -1399,72 +1398,37 @@ AI_SYSTEM_PROMPT = (
     "so. Skip disclaimers and pleasantries. If asked a plain question instead, answer it "
     "directly in 1-3 sentences. If the user explicitly asks to place/buy an order on a "
     "specific contract right now (e.g. 'place order on 24400 call in nifty', 'buy "
-    "BANKNIFTY 54000 PE'), call place_option_order with the extracted underlying, strike "
-    "and right instead of just describing it — only do this when they clearly want the "
+    "BANKNIFTY 54000 PE'), reply with ONLY one line: ORDER {\"underlying\": \"NIFTY|BANKNIFTY|SENSEX\", "
+    "\"strike\": number, \"right\": \"CE|PE\"} — only do this when they clearly want the "
     "order placed immediately, not when they're just asking for an opinion."
 )
-PLACE_ORDER_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "place_option_order",
-        "description": "Place a real BUY order on an index option contract immediately at the current market price.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "underlying": {"type": "string", "enum": ["NIFTY", "BANKNIFTY", "SENSEX"]},
-                "strike": {"type": "number"},
-                "right": {"type": "string", "enum": ["CE", "PE"], "description": "CE for call, PE for put"},
-            },
-            "required": ["underlying", "strike", "right"],
-        },
-    },
-}
+ORDER_LINE_RE = re.compile(r"^ORDER\s*(\{.*\})\s*$", re.M)
 
 
 @app.post("/api/ai/chat")
 def ai_chat(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    if not OPENAI_API_KEY:
-        raise HTTPException(500, "OPENAI_API_KEY not configured on server")
-    messages = payload.get("messages") or []
+    messages = [m for m in payload.get("messages") or [] if isinstance(m.get("content"), str)]
     if not messages:
         raise HTTPException(400, "messages required")
-    image = payload.get("image")
-    if image:
-        last = messages[-1]
-        messages = [
-            *messages[:-1],
-            {"role": "user", "content": [
-                {"type": "text", "text": last["content"]},
-                {"type": "image_url", "image_url": {"url": image}},
-            ]},
-        ]
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "system", "content": AI_SYSTEM_PROMPT}, *messages],
-            "max_tokens": 200,
-            "tools": [PLACE_ORDER_TOOL],
-        },
-        timeout=60,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(502, f"OpenAI request failed: {resp.text}")
-    message = resp.json()["choices"][0]["message"]
-    tool_calls = message.get("tool_calls")
-    if tool_calls:
-        args = json.loads(tool_calls[0]["function"]["arguments"])
+    transcript = "\n\n".join(f"{m.get('role', 'user').upper()}: {m['content']}" for m in messages[:-1])
+    prompt = (f"Conversation so far:\n{transcript}\n\n" if transcript else "") + messages[-1]["content"]
+    reply = claude_ai.ask_claude(user, prompt, AI_SYSTEM_PROMPT, payload.get("image")).strip()
+    match = ORDER_LINE_RE.search(reply)
+    if match:
+        try:
+            args = json.loads(match.group(1))
+            assert args["underlying"] in ("NIFTY", "BANKNIFTY", "SENSEX") and args["right"] in ("CE", "PE")
+            strike = str(int(float(args["strike"])))
+        except (ValueError, KeyError, TypeError, AssertionError):
+            return {"success": True, "reply": "I couldn't read that order — say the index, strike and CE/PE again."}
         # ai_order_service.py expects strike as a string (same as every other caller
-        # of this proxy, e.g. AiOrderControls.jsx) — the tool schema emits a number.
-        order = trading_ai_enter_option_order({**args, "strike": str(int(args["strike"]))})
+        # of this proxy, e.g. AiOrderControls.jsx).
+        order = trading_ai_enter_option_order({"underlying": args["underlying"], "strike": strike, "right": args["right"]}, user)
         reply = (
             f"Order placed: {order['symbol']} x{order['lotsize']} @ {order['ltp']} (id {order['orderId']})"
             if order.get("status") == "success"
             else f"Order failed: {order.get('message', 'unknown error')}"
         )
-    else:
-        reply = message["content"]
     return {"success": True, "reply": reply}
 
 
@@ -1489,32 +1453,15 @@ AI_ANALYZE_SYSTEM_PROMPT = (
 
 @app.post("/api/ai/analyze")
 def ai_analyze(payload: dict = Body(...), user=Depends(auth.get_current_user)):
-    if not OPENAI_API_KEY:
-        raise HTTPException(500, "OPENAI_API_KEY not configured on server")
     image = payload.get("image")
     context = payload.get("context") or ""
     if not image and not context:
         raise HTTPException(400, "image or context required")
-    content = [{"type": "text", "text": f"Analyze this chart.{context}"}]
-    if image:
-        content.append({"type": "image_url", "image_url": {"url": image}})
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "system", "content": AI_ANALYZE_SYSTEM_PROMPT}, {"role": "user", "content": content}],
-            "response_format": {"type": "json_object"},
-            "max_tokens": 500,
-        },
-        timeout=60,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(502, f"OpenAI request failed: {resp.text}")
+    text = claude_ai.ask_claude(user, f"Analyze this chart.{context}", AI_ANALYZE_SYSTEM_PROMPT, image)
     try:
-        analysis = json.loads(resp.json()["choices"][0]["message"]["content"])
-    except (KeyError, ValueError):
-        raise HTTPException(502, "OpenAI returned an unparseable analysis")
+        analysis = json.loads(text[text.index("{"):text.rindex("}") + 1])
+    except ValueError:
+        raise HTTPException(502, "Claude returned an unparseable analysis")
     return {"success": True, **analysis}
 
 
@@ -1528,6 +1475,9 @@ def telegram_alert(payload: dict = Body(...), user=Depends(get_effective_user)):
         raise HTTPException(400, "text required")
     resp = requests.post(f"{trading_api(user)}/api/send_alert", json={"message": text}, timeout=20)
     return resp.json()
+
+
+app.include_router(claude_ai.router)  # the "AI Chat" tab
 
 
 if __name__ == "__main__":

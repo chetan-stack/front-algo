@@ -5,6 +5,7 @@ import Chart from './Chart'
 import TradingPanel from './TradingPanel'
 import Login from './Login'
 import Admin from './Admin'
+import AiChatTab from './AiChatTab'
 import AdminLogs from './AdminLogs'
 import Analysis from './Analysis'
 import Notifications from './Notifications'
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'failed-orders', label: 'Failed Orders' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'ai-chat', label: 'AI Chat' },
 ]
 
 export default function App() {
@@ -112,7 +114,7 @@ export default function App() {
     // Land on whichever charts tab matches where "View chart" was clicked
     // from — used to always go to the india charts view, even from the
     // crypto trading tab.
-    setView(view === 'crypto-trading' ? 'crypto-charts' : 'charts')
+    setView(req.market === 'crypto' || view === 'crypto-trading' ? 'crypto-charts' : 'charts')
   }
 
   if (!token) {
@@ -150,6 +152,10 @@ export default function App() {
     if ((v === 'analysis' || v === 'crypto-analysis') && isAdmin) return <div style={{ flex: 1, minHeight: 0 }}><Analysis key={v} market={v === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
     if (v === 'all-notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
     if (v === 'notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
+    if (v === 'ai-chat') {
+      const ctx = paneCharts.flatMap((pc) => Object.values(pc || {})).filter((c) => c?.symbol).map((c) => `${c.symbol} ${c.interval}`)
+      return <div style={{ flex: 1, minHeight: 0 }}><AiChatTab chartContext={[...new Set(ctx)].join(', ')} onViewOnChart={viewOnChart} /></div>
+    }
     if (v === 'orderbook') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
     if (v === 'failed-orders') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
     if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>

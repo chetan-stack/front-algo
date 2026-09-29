@@ -26,3 +26,4 @@ dist-ssr
 .venv
 users.db
 __pycache__
+ai_usage.json
