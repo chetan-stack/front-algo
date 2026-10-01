@@ -1479,6 +1479,9 @@ def telegram_alert(payload: dict = Body(...), user=Depends(get_effective_user)):
 
 app.include_router(claude_ai.router)  # the "AI Chat" tab
 
+import tts  # human-sounding voice for AI Chat (Kokoro, local)
+app.include_router(tts.router)
+
 
 if __name__ == "__main__":
     import uvicorn

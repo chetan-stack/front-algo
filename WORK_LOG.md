@@ -36,6 +36,19 @@ pending, so a new session can pick up without the old conversation.
   panel share the count), admins unlimited. Counts in `ai_usage.json` (gitignored, resets daily);
   failed answers are refunded. 429 when over; tab shows "N of 5 left today" (`GET /api/ai/quota`).
   Limit = `DAILY_LIMIT` in ai_chat.py.
+- Voice in AI Chat (frontend only, `src/AiChatTab.jsx`): 🎤 = browser Web Speech API speech-to-text
+  (Chrome/Edge/Safari; hidden on Firefox; needs https or localhost), auto-sends when you stop talking;
+  "Read answers aloud" = speechSynthesis, sentence by sentence; English (India) / Hindi. Free, no library.
+  Voice picker: most natural browser voice auto-picked (Natural/Neural > Premium/Enhanced > Google >
+  rest; ★ in list), sample plays on change, choice remembered. This Mac only has basic Rishi/Lekha.
+- Human voice (same in every browser): `tts.py` router — Kokoro-82M (Apache-2.0) via kokoro-onnx 0.6.1
+  in .venv, local CPU, free. Model files in `models/` (gitignored): kokoro-v1.0.onnx + voices-v1.0.bin
+  from github.com/thewh1teagle/kokoro-onnx releases model-files-v1.0 (int8 file was 2.5x slower on this
+  i7-8850H, deleted). `GET /api/ai/voices`, `POST /api/ai/tts {text, voice}` → WAV (≤600 chars).
+  10 voices (US/UK English, Hindi); Devanagari text read with Hindi phonemes. Loaded on first use
+  (~600MB in the backend), one synthesis at a time; ~2x real time. Frontend asks sentence groups and
+  plays one while fetching the next; falls back to browser speechSynthesis if the backend can't.
+  Self-check: `.venv/bin/python tts.py`.
 - NEEDS: backend restart to load it.
 
 ---
