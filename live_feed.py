@@ -185,6 +185,24 @@ def _get_rest_session():
         return _rest_obj
 
 
+# AngelOne allows ~3 getCandleData calls/sec per account, and every user's
+# bots plus the chart share this one account. Calls queue up here instead of
+# bursting past the limit and failing with "exceeding access rate".
+CANDLE_MIN_GAP = 0.4  # seconds between calls, ~2.5/sec
+_candle_rate_lock = threading.Lock()
+_last_candle_call = 0.0
+
+
+def _candle_call(obj, params):
+    global _last_candle_call
+    with _candle_rate_lock:
+        wait = _last_candle_call + CANDLE_MIN_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last_candle_call = time.time()
+    return obj.getCandleData(params)["data"]
+
+
 def get_historical_candles(exch_seg, token, interval, from_date, to_date):
     """[[datetime, open, high, low, close, volume], ...] for the given Angel
     One (exch_seg, token), via the shared account's own REST session. Retries
@@ -198,13 +216,13 @@ def get_historical_candles(exch_seg, token, interval, from_date, to_date):
     }
     obj = _get_rest_session()
     try:
-        return obj.getCandleData(params)["data"]
+        return _candle_call(obj, params)
     except Exception:
         global _rest_obj
         with _rest_lock:
             _rest_obj = None
         obj = _get_rest_session()
-        return obj.getCandleData(params)["data"]
+        return _candle_call(obj, params)
 
 
 def _on_data(wsapp, message, loop):

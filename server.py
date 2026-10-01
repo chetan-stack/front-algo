@@ -1039,21 +1039,30 @@ def quote(symbol: str = "NSE:NIFTY"):
 # get_historical_candles()). Cached briefly since several demo accounts can
 # ask for the same/overlapping window within seconds of each other, and
 # AngelOne's own historical API is rate-limited per second.
-_candle_cache = {}  # (exch_seg, token, interval) -> (fetched_at, candles)
-CANDLE_CACHE_TTL = 20
+# Kept short so the newest (still-forming) candle is at most a few seconds
+# old. Live prices never come from here (ltpData / the tick websocket).
+# One lock per key: bots asking for the same candles at the same moment wait
+# for the first fetch instead of each calling AngelOne.
+_candle_cache = {}  # (exch_seg, token, interval, from_date) -> (fetched_at, candles)
+_candle_key_locks = {}
+_candle_key_locks_lock = threading.Lock()
+CANDLE_CACHE_TTL = 5
 
 
 @app.get("/api/historical-candle")
 def historical_candle(exch_seg: str, token: str, interval: str, from_date: str, to_date: str):
-    key = (exch_seg, token, interval)
-    cached = _candle_cache.get(key)
-    if cached and time.time() - cached[0] < CANDLE_CACHE_TTL:
-        return {"success": True, "data": cached[1]}
-    try:
-        candles = live_feed.get_historical_candles(exch_seg, token, interval, from_date, to_date)
-    except Exception as e:
-        raise HTTPException(502, f"historical candle fetch failed: {e}")
-    _candle_cache[key] = (time.time(), candles)
+    key = (exch_seg, token, interval, from_date)
+    with _candle_key_locks_lock:
+        key_lock = _candle_key_locks.setdefault(key, threading.Lock())
+    with key_lock:
+        cached = _candle_cache.get(key)
+        if cached and time.time() - cached[0] < CANDLE_CACHE_TTL:
+            return {"success": True, "data": cached[1]}
+        try:
+            candles = live_feed.get_historical_candles(exch_seg, token, interval, from_date, to_date)
+        except Exception as e:
+            raise HTTPException(502, f"historical candle fetch failed: {e}")
+        _candle_cache[key] = (time.time(), candles)
     return {"success": True, "data": candles}
 
 
