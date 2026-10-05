@@ -51,7 +51,24 @@ def main():
     server._candle_cache[key] = (time.time() - server.CANDLE_CACHE_TTL - 1, [])
     server.historical_candle(*key, "2026-10-01 10:01")
     assert len(fake.calls) == 3
-    print("candle cache/throttle: 4/4 checks passed")
+
+    # 5. "exceeding access rate" -> back off ~1s and retry, never re-login
+    logins = []
+    live_feed._get_rest_session = lambda: logins.append(1) or fake
+    real_call, fails = fake.getCandleData, [2]
+
+    def flaky(params):
+        if fails[0]:
+            fails[0] -= 1
+            raise Exception("Couldn't parse the JSON response: b'Access denied because of exceeding access rate'")
+        return real_call(params)
+    fake.getCandleData = flaky
+    live_feed._rest_obj = "session"
+    t0 = time.time()
+    assert live_feed.get_historical_candles("NFO", "1", "ONE_MINUTE", "a", "b")
+    assert time.time() - t0 >= 2, "should have backed off twice"
+    assert live_feed._rest_obj == "session", "rate limit must not drop the session"
+    print("candle cache/throttle: 5/5 checks passed")
 
 
 if __name__ == "__main__":

@@ -434,6 +434,37 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               <label>Loss pts <input style={input} value={config.loss_points ?? ''} onChange={(e) => setConfig({ ...config, loss_points: e.target.value })} /></label>
             </>
           )}
+          {market === 'india' && (
+            // Per-index target/stoploss (index_points.py). Blank = the global Target/Loss pts.
+            // Stamped on each order at entry; open positions keep the points they entered with.
+            <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: '#787b86' }}>Per-index target / stoploss pts (blank = global above)</span>
+              {['NIFTY', 'BANKNIFTY', 'SENSEX'].map((idx) => {
+                const ip = config.index_points || {}
+                const own = ip[idx] || {}
+                const set = (k, v) => setConfig({ ...config, index_points: { ...ip, [idx]: { ...own, [k]: v } } })
+                const sug = marketState?.[idx]?.suggest
+                return (
+                  <div key={idx} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 84 }}>{idx}</span>
+                    <label>Target <input style={{ ...input, width: 60 }} value={own.target ?? ''} placeholder={config.target_points ?? ''}
+                      onChange={(e) => set('target', e.target.value)} /></label>
+                    <label>Stoploss <input style={{ ...input, width: 60 }} value={own.loss ?? ''} placeholder={config.loss_points ?? ''}
+                      onChange={(e) => set('loss', e.target.value)} /></label>
+                    {sug && (
+                      <span title={sug.why} style={{ fontSize: 11, color: '#f0b90b' }}>
+                        Suggested now: target {sug.target} / stoploss {sug.loss}{' '}
+                        <button style={{ ...input, width: 'auto', padding: '1px 6px', cursor: 'pointer' }}
+                          onClick={() => setConfig({ ...config, index_points: { ...ip, [idx]: { target: String(sug.target), loss: String(sug.loss) } } })}>
+                          Use
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           <label>Range min <input style={input} value={config.trade_range_min ?? ''} onChange={(e) => setConfig({ ...config, trade_range_min: e.target.value })} /></label>
           <label>Range max <input style={input} value={config.trade_range_max ?? ''} onChange={(e) => setConfig({ ...config, trade_range_max: e.target.value })} /></label>
           {market === 'crypto' && (config.instrument || 'options') === 'futures' ? (

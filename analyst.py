@@ -526,6 +526,19 @@ def prune_log(path, today):
 ACCOUNT_ALERT_WORDS = ("ATTENTION", "REVIEW", "FIX", "START", "PAUSE", "PREPARE")
 
 
+def suggest_points(a):
+    """Suggested option target/stoploss points for an ATM option of this index, from
+    its live 1-min ATR and trend. ATM premium moves ~half the index (delta ~0.5);
+    the stop has room for ~3 normal minutes of noise, so it isn't hit by chop alone.
+    Trending -> target 2x stop (let it run), sideways -> 1x (take quick), mixed -> 1.5x.
+    ponytail: delta 0.5 / 3 bars / multipliers are rule-of-thumb, tune from trade results."""
+    stop = max(5, round(0.5 * a["atr"] * 3))
+    mult = 2 if a["state"] in ("TRENDING_UP", "TRENDING_DOWN") else 1 if a["state"] == "SIDEWAYS" else 1.5
+    word = {2: "trending, let it run", 1: "sideways, take quick", 1.5: "mixed"}[mult]
+    return {"target": round(stop * mult), "loss": stop,
+            "why": f"1-min ATR {a['atr']:.1f} index pts -> ~{0.5 * a['atr']:.1f} option pts/min; {word}"}
+
+
 def cycle(mk):
     now = datetime.now(IST)
     today, st = f"{now:%Y-%m-%d}", mk["st"]
@@ -580,7 +593,7 @@ def cycle(mk):
         st["last"][name] = cur
         states[name] = {"state": a["state"], "price": round(a["price"], 2), "er": round(a["er"], 2),
                         "delayed": a["age_min"] > STALE_MIN, "label": ol["label"], "text": ol["text"],
-                        "why": explain(a, ol)}
+                        "why": explain(a, ol), "suggest": suggest_points(a)}
     flagged = set()
     try:
         rows, findings = check_accounts(mk, idx)
@@ -693,6 +706,10 @@ def selftest():
     a = dict(analyze(flat), price=99.6, closes=[99.6] * 6, age_min=0)
     assert outlook(a, lv, atrs)["label"] == "COILED", outlook(a, lv, atrs)
     assert outlook(dict(a, age_min=15), lv, atrs)["label"] == "NO_SIGNAL"
+    sp = suggest_points({"atr": 12.0, "state": "TRENDING_UP"})
+    assert (sp["loss"], sp["target"]) == (18, 36), sp
+    assert suggest_points({"atr": 12.0, "state": "SIDEWAYS"})["target"] == 18
+    assert suggest_points({"atr": 1.0, "state": "MIXED"})["loss"] == 5, "floor of 5 pts"
     assert MARKETS["crypto"]["under"]("C-BTC-78200-310826") == "BTC" and MARKETS["crypto"]["is_call"]("C-BTC-78200-310826")
     assert MARKETS["india"]["under"]("BANKNIFTY29SEP2656100CE") == "BANKNIFTY" and MARKETS["india"]["is_put"]("NIFTY22SEP2623400PE")
     with tempfile.TemporaryDirectory() as d:

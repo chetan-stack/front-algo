@@ -6,6 +6,80 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-05 11:52–13:54 — 2 h paper test of per-index points (report: ~/Desktop/trading_test_report_2026-10-05.md)
+
+- Config set directly in all 7 auto_trade.json at ~11:40: index_points NIFTY 17/17, BANKNIFTY 86/57, SENSEX
+  44/44; stop_loss (daily stoploss limit) 50. Backup: ~/tradingview-backups/2026-10-05-pre-index-points/.
+- 56 orders: all 47 exits at the index's points with the right reason, P&L arithmetic correct, closed P&L
+  +₹43,002 (morning: −₹12,137). Median hold 475s (morning ~60s). No duplicates or crashes. Candle 502s 6.2–6.7%.
+- Bug found and fixed: store_exit wrote the GLOBAL points onto an order when it exited (display only, the
+  exit decision was right). Now uses points_for. test_index_points_flow.py 14/14. NEEDS store_exit restart.
+- Still to do: restart the India analyst (suggestions), rate-limit throttle/stagger, commit.
+
+---
+
+## 2026-10-05 — per-index target/stoploss + suggested points (uncommitted, both repos)
+
+- `SmartApi/index_points.py`: `points_for(cfg, symbol)` gives (loss, target) from
+  auto_trade.json `index_points[NIFTY|BANKNIFTY|SENSEX]`, with blank falling back to global
+  target_points/loss_points. `clean()` filters what the dashboard may save. Self-check: run the file.
+- Used at entry (storesupportzone placeemabuyorder + live hedged short, webviewdataapi live_entry +
+  adopt) and on store_exit's first 'hold' write (covers AI/manual entries). The exit already uses each
+  order's own storeorder points, so open positions keep the points they entered with.
+- webviewdataapi `/api/dashboard/config` saves `index_points` when sent.
+- `analyst.py suggest_points()`: stoploss = max(5, round(0.5 × 1-min ATR × 3)); target = 2× (trending),
+  1× (sideways), 1.5× (mixed). Goes in `{market}_market_state.json` → `/api/market-state` → Trading
+  panel: "Suggested now: target X / stoploss Y [Use]" beside each index's inputs (hover shows why).
+- Tests: test_all_trading 40/40, test_live_trade 31/31 (loader gets index_points), paper 3/3,
+  sl_cooldown 12/12, analyst --selftest ok, vite build ok.
+- NEEDS: restart every india dashboard (webviewdataapi, otherwise index_points is silently not saved),
+  the strategy + exit bots (Admin → Restart), and the India analyst (Alerts tab → Restart).
+
+---
+
+## 2026-10-05 — exit reasons, stoploss cooldown, chart folder (pythonProject, data_cache, uncommitted)
+
+- `store_exit.py`: new `exit_note()` used by every exit message. It says the real reason:
+  "Exit by Target hit (+10 pts)", "Stoploss hit (-10 pts)", "EOD square-off", "exit requested",
+  "broker (...)", "live short cover (...)". It used to always say "Exit by EMA". "Profit/Loss" now
+  appears once, rounded to 2 decimals, still in the format the dashboard parsers read.
+- `storesupportzone.py`: `sl_cooldown_reason()` runs in ce_format/pe_format before the AI check.
+  After a losing exit on the same index + side (CE/PE), no new buy for `sl_cooldown_minutes`
+  (auto_trade.json, default 5). Exception (strong confirmation): the same option trades back above
+  the stopped trade's buy price. A skip is printed in the bot log, with no Telegram alert. Covers the
+  buy paths only, not option selling.
+- `storesupportzone.py`: `os.makedirs("static")` at startup, so demo accounts can save the chart and
+  their entry alert is sent.
+- Tests: test_sl_cooldown.py 12/12 (replays the Oct 5 whipsaw), test_all_trading 40/40, test_live_trade
+  31/31, test_paper_unchanged 3/3.
+- NEEDS: Admin → Restart storesupportzone + store_exit for each account to load it.
+
+---
+
+## 2026-10-04 — candle rate limit: stop the re-login cascade (branch data_cache, uncommitted)
+
+- Oct 1 backend.log (after the shared-fetch commit dbed7b5): 894 of 4746 /api/historical-candle
+  requests got a 502, and 2276 new SmartConnect sessions were created in one day. Cause: on ANY
+  exception, `live_feed.get_historical_candles` logged in again and retried right away, so each
+  rate-limit error cost an extra login plus a retry, which kept the account over the limit. On a 502,
+  chetan's bots then called getCandleData directly on the same AngelOne account (bot logs: 55
+  "exceeding access rate" errors, 12:10–13:24).
+- Fix: on a rate-limit error or timeout, every caller backs off 1s and it retries (3 tries total).
+  It logs in again only on other errors. `live_candle_client`: a 502 from the backend means no
+  own-session fallback (same account); the fallback is used only when the backend is unreachable.
+  The 502 body (the AngelOne reason) is now printed in the bot log.
+- Tests: test_candle_cache.py 5/5; client fallback checked with mocks.
+- NEEDS: backend restart + chetan's storesupportzone/store_exit (Admin → Restart). Then grep
+  backend.log for "in pool" (should be only a handful a day) and the bot logs for "exceeding".
+- RESULT 2026-10-05 09:39–10:40 (paper): candle 502s 6.9% (was 18.8%), backend logins 2 (was 2,276/day).
+  Still rate-limited, so something else on chetan's key uses the limit. Full report:
+  `~/tradingview-analysis/live_test_report_2026-10-05.md` (also: demo accounts never send the entry alert
+  because `static/chart.png` is missing; vijay and all crypto strategy bots are not running).
+- PLAN (done): live test Mon 2026-10-05 in market hours, 30–60 min of normal traffic. A stress test on
+  chetan's real account was declined (load script left in that session's scratchpad, not needed).
+
+---
+
 ## 2026-09-29 — AI Chat tab + all AI on Claude Code (no OpenAI, no API key)
 
 - New tab **AI Chat** (`src/AiChatTab.jsx`, wired in `src/App.jsx` TABS/renderView) —

@@ -214,15 +214,22 @@ def get_historical_candles(exch_seg, token, interval, from_date, to_date):
         "fromdate": from_date,
         "todate": to_date,
     }
-    obj = _get_rest_session()
-    try:
-        return _candle_call(obj, params)
-    except Exception:
-        global _rest_obj
-        with _rest_lock:
-            _rest_obj = None
-        obj = _get_rest_session()
-        return _candle_call(obj, params)
+    global _rest_obj, _last_candle_call
+    for attempt in range(3):
+        try:
+            return _candle_call(_get_rest_session(), params)
+        except Exception as e:
+            if attempt == 2:
+                raise
+            if "exceeding access rate" in str(e) or isinstance(e, requests.RequestException):
+                # Rate-limited or slow, not a bad session: everyone backs off
+                # 1s. Re-logging in here (the old behaviour) cost a login per
+                # failure and kept the account over the limit.
+                with _candle_rate_lock:
+                    _last_candle_call = max(_last_candle_call, time.time() + 1)
+            else:
+                with _rest_lock:
+                    _rest_obj = None
 
 
 def _on_data(wsapp, message, loop):
