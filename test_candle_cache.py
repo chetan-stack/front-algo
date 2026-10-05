@@ -42,15 +42,24 @@ def main():
     assert len(fake.calls) == 1, len(fake.calls)
     assert len(results) == 6 and all(r["success"] for r in results)
 
-    # 3. a different from_date is a different window -> not served from cache
-    server.historical_candle("NSE", "99926000", "ONE_MINUTE", "2026-09-30 09:15", "2026-10-01 10:00")
-    assert len(fake.calls) == 2
+    # 3. entry bot (yesterday 09:15) + exit bot (today 09:15) -> ONE AngelOne call, each gets its slice
+    server._candle_cache.clear(); fake.calls.clear()
+    asked = []
+    def window_fake(params):
+        asked.append(params["fromdate"]); fake.calls.append(time.time())
+        return {"data": [["2026-09-30T15:29:00+05:30", 1, 1, 1, 1, 0], ["2026-10-01T09:15:00+05:30", 2, 2, 2, 2, 0]]}
+    fake.getCandleData = window_fake
+    wide = server.historical_candle("NSE", "99926000", "ONE_MINUTE", "2026-09-30 09:15", "2026-10-01 10:00")["data"]
+    narrow = server.historical_candle("NSE", "99926000", "ONE_MINUTE", "2026-10-01 09:15", "2026-10-01 10:00")["data"]
+    assert len(fake.calls) == 1, asked
+    assert len(wide) == 2 and len(narrow) == 1 and narrow[0][0].startswith("2026-10-01"), (wide, narrow)
 
-    # 4. cache expires after CANDLE_CACHE_TTL -> fresh data again
-    key = ("NSE", "99926000", "ONE_MINUTE", "2026-10-01 09:15")
-    server._candle_cache[key] = (time.time() - server.CANDLE_CACHE_TTL - 1, [])
-    server.historical_candle(*key, "2026-10-01 10:01")
-    assert len(fake.calls) == 3
+    # 4. after the cache expires, the refetch keeps the wider window, even when the narrow caller asks first
+    key = ("NSE", "99926000", "ONE_MINUTE")
+    server._candle_cache[key] = (time.time() - server.CANDLE_CACHE_TTL - 1, "2026-09-30 09:15", [])
+    server.historical_candle("NSE", "99926000", "ONE_MINUTE", "2026-10-01 09:15", "2026-10-01 10:01")
+    assert asked[-1] == "2026-09-30 09:15" and len(fake.calls) == 2, asked
+    fake.getCandleData = FakeBroker.getCandleData.__get__(fake)
 
     # 5. "exceeding access rate" -> back off ~1s and retry, never re-login
     logins = []

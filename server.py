@@ -837,6 +837,47 @@ def admin_restart_strategy_bot(username: str, bot: str, admin=Depends(auth.requi
     return {"success": True, "alive": proc.poll() is None}
 
 
+# One click for every user's India auto-strategy + auto-exit (Admin → Users →
+# "Restart all strategy + exit bots"). Same steps as the per-bot Restart above:
+# kill the tracked PID first, so a restart never leaves a duplicate. A real
+# account logs in to AngelOne on start (login limit ~1/s), so its bots are
+# spaced 8s apart like start.sh; demo accounts have no login, 2s is enough.
+# Accounts without India auto-strategy (no auto_trade.json) are skipped.
+@app.post("/api/admin/bots/restart-all")
+def admin_restart_all_strategy_bots(admin=Depends(auth.require_admin)):
+    results = []
+    for u in auth.list_users():
+        account_dir = _managed_account_dir(SMARTAPI_DIR, u["username"])
+        if not (account_dir / "auto_trade.json").exists():
+            continue
+        doc = _read_document_py(account_dir)
+        gap = 8 if doc and not doc["demo_mode"] else 2
+        for bot in ("storesupportzone", "store_exit"):
+            base_dir, script_name = STRATEGY_BOTS[bot]
+            _kill_pid(account_dir, script_name)
+            proc = _start_bot_process(script_name, base_dir, account_dir)
+            time.sleep(gap)
+            results.append({"user": u["username"], "bot": bot, "alive": proc.poll() is None})
+    return {"success": True, "results": results}
+
+
+# Admin → Users → "Stop all strategy + exit bots": the per-bot Stop above, for
+# every user with India auto-strategy. Open positions stay in the database and
+# are picked up again by the next start, but nothing watches them meanwhile.
+@app.post("/api/admin/bots/stop-all")
+def admin_stop_all_strategy_bots(admin=Depends(auth.require_admin)):
+    results = []
+    for u in auth.list_users():
+        account_dir = _managed_account_dir(SMARTAPI_DIR, u["username"])
+        if not (account_dir / "auto_trade.json").exists():
+            continue
+        for bot in ("storesupportzone", "store_exit"):
+            base_dir, script_name = STRATEGY_BOTS[bot]
+            _kill_pid(account_dir, script_name)
+            results.append({"user": u["username"], "bot": bot, "alive": _pid_alive(account_dir, script_name)})
+    return {"success": True, "results": results}
+
+
 @app.post("/api/admin/users/{username}/reset-password")
 def admin_reset_password(username: str, payload: dict = Body(...), admin=Depends(auth.require_admin)):
     new_password = payload.get("password")
@@ -1043,27 +1084,63 @@ def quote(symbol: str = "NSE:NIFTY"):
 # old. Live prices never come from here (ltpData / the tick websocket).
 # One lock per key: bots asking for the same candles at the same moment wait
 # for the first fetch instead of each calling AngelOne.
-_candle_cache = {}  # (exch_seg, token, interval, from_date) -> (fetched_at, candles)
+# One fetch per contract, not per window: the entry bot asks from yesterday
+# 09:15 and the exit bot from today 09:15, which used to be two AngelOne calls.
+# The cache holds the widest window asked for (within 2 days) and each caller
+# gets its slice.
+_candle_cache = {}  # (exch_seg, token, interval) -> (fetched_at, from_date, candles)
 _candle_key_locks = {}
 _candle_key_locks_lock = threading.Lock()
 CANDLE_CACHE_TTL = 5
 
 
+def _candles_since(candles, from_date):
+    # candle time "2026-10-05T09:15:00+05:30" vs from_date "2026-10-05 09:15"
+    if not candles:
+        return candles  # None = AngelOne had no data, passed on as before
+    return [c for c in candles if str(c[0])[:16].replace("T", " ") >= from_date[:16]]
+
+
 @app.get("/api/historical-candle")
 def historical_candle(exch_seg: str, token: str, interval: str, from_date: str, to_date: str):
-    key = (exch_seg, token, interval, from_date)
+    key = (exch_seg, token, interval)
     with _candle_key_locks_lock:
         key_lock = _candle_key_locks.setdefault(key, threading.Lock())
     with key_lock:
         cached = _candle_cache.get(key)
-        if cached and time.time() - cached[0] < CANDLE_CACHE_TTL:
-            return {"success": True, "data": cached[1]}
+        if cached and time.time() - cached[0] < CANDLE_CACHE_TTL and cached[1] <= from_date:
+            return {"success": True, "data": _candles_since(cached[2], from_date)}
+        start = from_date
+        if cached and cached[1] < from_date and cached[1][:10] >= (
+                datetime.strptime(from_date[:10], "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d"):
+            start = cached[1]  # keep fetching the wider window the other bot needs
         try:
-            candles = live_feed.get_historical_candles(exch_seg, token, interval, from_date, to_date)
+            candles = live_feed.get_historical_candles(exch_seg, token, interval, start, to_date)
         except Exception as e:
             raise HTTPException(502, f"historical candle fetch failed: {e}")
-        _candle_cache[key] = (time.time(), candles)
-    return {"success": True, "data": candles}
+        _candle_cache[key] = (time.time(), start, candles)
+    return {"success": True, "data": _candles_since(candles, from_date)}
+
+
+# REST LTP on the shared AngelOne session, for an exit bot whose websocket tick
+# is missing or stale (store_exit.get_ltp_data -> live_ltp_client.get_rest_ltp):
+# better a fresh REST price than exiting on an old tick. Cached 2s per token so a
+# feed outage, with every demo bot falling back at once, stays under ltpData's ~10/s.
+_ltp_cache = {}  # token -> (fetched_at, ltp)
+LTP_CACHE_TTL = 2
+
+
+@app.get("/api/ltp")
+def rest_ltp(exch_seg: str, symbol: str, token: str):
+    cached = _ltp_cache.get(token)
+    if cached and time.time() - cached[0] < LTP_CACHE_TTL:
+        return {"success": True, "ltp": cached[1]}
+    try:
+        price = float(live_feed._get_rest_session().ltpData(exch_seg, symbol, token)["data"]["ltp"])
+    except Exception as e:
+        raise HTTPException(502, f"ltp fetch failed: {e}")
+    _ltp_cache[token] = (time.time(), price)
+    return {"success": True, "ltp": price}
 
 
 # Live ticks via SmartAPI's websocket, for the chart's "Live" toggle. If the

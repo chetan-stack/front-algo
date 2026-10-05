@@ -10,6 +10,7 @@ const smallDangerBtn = { ...smallBtn, color: '#ef5350' }
 
 export default function Admin({ onActAsUser }) {
   const [users, setUsers] = useState([])
+  const [restartAll, setRestartAll] = useState({ busy: false, msg: '' })
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [demoMode, setDemoMode] = useState(true)
@@ -109,6 +110,39 @@ export default function Admin({ onActAsUser }) {
       setManageMessage(`Error: ${err.message}`)
     }
     setManageBusy(false)
+  }
+
+  // Every user's auto-strategy + auto-exit in one go (server: /api/admin/bots/restart-all).
+  // Takes ~1 min: real accounts are spaced 8s apart for AngelOne's login limit.
+  async function restartAllBots() {
+    if (!confirm('Restart auto-strategy and auto-exit for ALL users?\n\nOpen positions are kept; the exit bot picks them up again. Takes about a minute.')) return
+    setRestartAll({ busy: true, msg: 'Restarting all strategy + exit bots… (about a minute)' })
+    try {
+      const res = await apiFetch('/api/admin/bots/restart-all', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'restart failed')
+      const byUser = {}
+      for (const r of data.results) (byUser[r.user] ||= []).push(`${r.bot === 'store_exit' ? 'exit' : 'strategy'} ${r.alive ? '🟢' : '🔴'}`)
+      setRestartAll({ busy: false, msg: Object.entries(byUser).map(([u, v]) => `${u}: ${v.join(', ')}`).join(' · ') })
+      loadUsers()
+    } catch (err) {
+      setRestartAll({ busy: false, msg: `Error: ${err.message}` })
+    }
+  }
+
+  async function stopAllBots() {
+    if (!confirm('Stop auto-strategy and auto-exit for ALL users?\n\nNo new entries, and open positions are NOT watched for target/stoploss until the bots are started again (paper positions have no broker stoploss).')) return
+    setRestartAll({ busy: true, msg: 'Stopping all strategy + exit bots…' })
+    try {
+      const res = await apiFetch('/api/admin/bots/stop-all', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'stop failed')
+      const still = data.results.filter((r) => r.alive).map((r) => `${r.user} ${r.bot}`)
+      setRestartAll({ busy: false, msg: still.length ? `Stopped, but still running: ${still.join(', ')}` : `All stopped 🔴 (${data.results.length} bots)` })
+      loadUsers()
+    } catch (err) {
+      setRestartAll({ busy: false, msg: `Error: ${err.message}` })
+    }
   }
 
   async function controlBot(username, bot, action) {
@@ -297,7 +331,18 @@ export default function Admin({ onActAsUser }) {
       </div>
 
       <div style={box}>
-        <h3 style={{ color: '#d1d4dc', marginTop: 0 }}>Users</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+          <h3 style={{ color: '#d1d4dc', margin: 0 }}>Users</h3>
+          <button onClick={restartAllBots} disabled={restartAll.busy}
+            style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
+            {restartAll.busy ? 'Working…' : 'Restart all strategy + exit bots'}
+          </button>
+          <button onClick={stopAllBots} disabled={restartAll.busy}
+            style={{ background: '#ef5350', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
+            Stop all strategy + exit bots
+          </button>
+          {restartAll.msg && <span style={{ fontSize: 12, color: '#d1d4dc' }}>{restartAll.msg}</span>}
+        </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ color: '#787b86', textAlign: 'left' }}>

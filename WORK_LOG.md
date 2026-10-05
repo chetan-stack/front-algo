@@ -6,6 +6,66 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-05 — Admin: one button restarts every user's strategy + exit bot (uncommitted)
+
+- `POST /api/admin/bots/restart-all` (server.py, require_admin): for every user with auto_trade.json,
+  restarts storesupportzone then store_exit with the existing kill-tracked-PID-then-start steps (no
+  duplicates). Real accounts are spaced 8s apart (AngelOne login limit), demo 2s. ~1 min for 7 users.
+  India only (crypto bots aren't included).
+- Admin.jsx: "Restart all strategy + exit bots" button next to the Users heading, with a confirm and a
+  per-user 🟢/🔴 result.
+- Also `POST /api/admin/bots/stop-all` + red "Stop all strategy + exit bots" button (confirm warns that
+  open positions aren't watched while stopped). Reports any bot still alive after the stop.
+- Test: test_restart_all.py 7/7. vite build ok. NEEDS: backend restart (the frontend reloads by itself).
+
+---
+
+## 2026-10-05 — exit bot: live price only, no candle call (uncommitted, pythonProject)
+
+- store_exit.getstoreetoken no longer fetches candles (removed get_historical_data and the
+  live_candle_client import). It calls exitstetergy([], [], item) / exitstetergysell([], [], item, hedge),
+  the same path that already ran whenever a candle call failed. Exits decide on get_ltp_data only
+  (demo: websocket tick < 20s, else /api/ltp REST; live: own ltpData).
+- Lost: only log lines (the candle dump and "sell signal" print). No exit logic used the candles.
+- Expected: the shared account's candle refusals (3.3% at 15:00–15:30) drop sharply, since the exit
+  bot was the biggest candle caller.
+- Tests: test_exit_no_candles.py 5/5 (new), all other suites pass.
+- NEEDS: store_exit restart for every account (after the backend restart for /api/ltp).
+
+---
+
+## 2026-10-05 — exit bot never decides on a stale price (uncommitted, both repos)
+
+- The exit decision uses only LTP. Demo accounts get it from the backend's shared websocket feed
+  (one AngelOne subscription per contract, ticks pushed to every user's bot), but
+  `live_ltp_client.get_ltp()` returned the LAST tick forever if the feed stalled.
+- `get_ltp(..., max_age=None)`: optional age limit (default unchanged for the entry bot / AI service).
+  `get_rest_ltp()` calls the new backend `/api/ltp` (ltpData on the shared session, 2s cache per token).
+- `store_exit.get_ltp_data` (demo): websocket tick if younger than `LTP_MAX_AGE` = 20s, else REST
+  price, else raise (that position is skipped until the next 5s tick, and logged). Live accounts unchanged
+  (own ltpData every check).
+- Tests: test_exit_ltp.py 8/8, test_rest_ltp.py 4/4 (new), all other suites pass.
+- NEEDS: backend restart (for /api/ltp), then store_exit restart for every account.
+
+---
+
+## 2026-10-05 — candle load: exit-bot cache, one fetch per contract, own login for live users (uncommitted)
+
+- store_exit keeps fetching candles every 5s tick (user decision: no exit-bot candle cache).
+- server.py /api/historical-candle: cache key (exch, token, interval), holding the WIDEST window asked for
+  (within 2 days), and each caller gets its slice. Entry (yesterday 09:15) + exit (today 09:15) = one AngelOne call.
+- live_candle_client: accounts/<user>/ with its own login (obj) fetches with its own AngelOne account first
+  (separate limit), throttled across that account's processes via `.candle_rate.lock` (0.4s gap), with the
+  shared backend as fallback. chetan (root = the shared account) and demo accounts are unchanged: backend first.
+- Not done (on purpose): serving old candles + live price on a refusal. The backend has no live price for
+  most option tokens without another call, and a stale last bar could trigger an entry on old data.
+  Revisit if refusals stay high after this.
+- Tests: test_candle_sources.py 11/11 (new), test_candle_cache.py 5/5 (checks 3–4 rewritten for the new
+  cache), all other suites pass.
+- NEEDS: backend restart, plus storesupportzone + store_exit restart for every account. Then measure 1 h.
+
+---
+
 ## 2026-10-05 11:52–13:54 — 2 h paper test of per-index points (report: ~/Desktop/trading_test_report_2026-10-05.md)
 
 - Config set directly in all 7 auto_trade.json at ~11:40: index_points NIFTY 17/17, BANKNIFTY 86/57, SENSEX
