@@ -6,6 +6,24 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-06 — crypto chart order buttons + crypto daily stoploss limit display (uncommitted; India untouched)
+
+- Crypto chart: "Long BTC / Short BTC" (futures) or "Buy BTC Call / Buy BTC Put" (options), chosen by the
+  saved "Trade in", for BTC/ETH charts. Confirm box says paper or REAL money. Chart.jsx crypto-only block
+  (`market === 'crypto'`); India's Buy CE/PE/Exit block unchanged.
+- `POST /api/crypto/trading/enter-order` (server.py) → crypto/webviewdataapi.py `/api/enter_order`: reuses
+  stetergy's helpers (get_future, futures_qty, getproduct) and placeOrder.place_order. Futures: perpetual,
+  futures_qty contracts, long=buy/short=sell. Options: buy the ATM call/put, 5 contracts like the bot. One
+  open position per coin (409 otherwise). Records in cryptoorderbook, so the crypto exit bot manages it.
+- Crypto Trading panel: "Stop loss" relabelled "Daily stoploss limit" (crypto only) + "used today: N / limit"
+  (red with "limit reached" when hit), from the dashboard's new `today` (todayorderdata).
+  India's "Stop loss" field is the same daily limit (storesupportzone: stoplossOrder < stop_loss), unchanged.
+- Tests: crypto/test_crypto_manual_entry.py 11/11 (new), test_crypto_futures 26/26, test_all_trading 40/40.
+- Chart.jsx: crypto chart shows the "Pending order" box + entry/target/stoploss lines only for an OPEN
+  position (no fallback to the last closed order; that showed an old BTCUSD box on every BTC chart).
+  India keeps its fallback.
+- NEEDS: restart the backend + chetan's crypto dashboard (webviewdataapi on 4101) and any crypto user's dashboard.
+
 ## 2026-10-05 — Admin: one button restarts every user's strategy + exit bot (uncommitted)
 
 - `POST /api/admin/bots/restart-all` (server.py, require_admin): for every user with auto_trade.json,

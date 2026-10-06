@@ -1457,6 +1457,14 @@ def crypto_trading_delete_order(payload: dict = Body(...), user=Depends(get_effe
     return resp.json()
 
 
+# Crypto chart's Long / Short buttons -> crypto/webviewdataapi.py enter_order
+# (futures or options by the saved "Trade in"; paper or real by "With money").
+@app.post("/api/crypto/trading/enter-order")
+def crypto_trading_enter_order(payload: dict = Body(...), user=Depends(get_effective_user)):
+    resp = requests.post(f"{crypto_api(user)}/api/enter_order", json=payload, timeout=60)
+    return resp.json()
+
+
 @app.post("/api/crypto/trading/exit-order")
 def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/exit_order", json=payload, timeout=20)

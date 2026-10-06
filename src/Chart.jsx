@@ -111,6 +111,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   const [orderEdit, setOrderEdit] = useState({ stoplosspoint: '', targetpoint: '' })
   const [orderBusy, setOrderBusy] = useState(false)
   const [tradeBusy, setTradeBusy] = useState(false)
+  const [cryptoCfg, setCryptoCfg] = useState(null)  // crypto only: saved Trade in + With money, for the Long/Short buttons
   const priceLinesRef = useRef([])
   const candlesRef = useRef([])
   const [aiOpen, setAiOpen] = useState(false)
@@ -550,7 +551,10 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       })
     : perpetual ? pendingOrders.filter((o) => o.symbol === perpetual) : []
   const isExited = (o) => String(o.orderterm).toLowerCase() === 'exit'  // crypto wrote 'Exit' / 'exit'
-  const matchedOrder = strikeMatches.findLast((o) => !isExited(o)) ?? strikeMatches.at(-1) ?? null
+  // crypto: open position only. Its order list keeps one entry per symbol forever and
+  // futures always use BTCUSD/ETHUSD, so falling back to the last closed one showed a
+  // "Pending order" box (and its lines) on every BTC chart after any trade.
+  const matchedOrder = strikeMatches.findLast((o) => !isExited(o)) ?? (market === 'crypto' ? null : strikeMatches.at(-1)) ?? null
 
   useEffect(() => { hasMatchedOrderRef.current = !!matchedOrder }, [matchedOrder])
   // Only an OPEN position gets its analyst alert, and only the newest one.
@@ -678,6 +682,37 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       if (d.status === 'success') loadPendingOrders()
     } catch {
       pushToast('Exit failed: could not reach order server')
+    }
+    setTradeBusy(false)
+  }
+
+  // Crypto chart Long / Short (crypto/webviewdataapi.py enter_order): futures -> the
+  // coin's perpetual (long = buy, short = sell); options -> buy the ATM call / put.
+  // Which one follows the saved "Trade in"; paper or real follows "With money".
+  useEffect(() => {
+    if (market !== 'crypto') return
+    apiFetch('/api/crypto/trading/dashboard').then((r) => r.json())
+      .then((d) => setCryptoCfg({ instrument: d.instrument || 'options', withmoney: !!d.form_data?.withmoney }))
+      .catch(() => setCryptoCfg(null))
+  }, [market, symbol])  // re-read on chart change, so a new "Trade in" shows without a reload
+
+  async function placeCryptoOrder(coin, direction) {
+    if (tradeBusy || !cryptoCfg) return
+    const futures = cryptoCfg.instrument === 'futures'
+    const what = futures ? `futures ${direction === 'long' ? 'LONG' : 'SHORT'} ${coin}USD perpetual` : `buy ${coin} ATM ${direction === 'long' ? 'call' : 'put'}`
+    if (!confirm(`Place ${what} now?\n\n${cryptoCfg.withmoney ? '💰 REAL MONEY ("With money" is on)' : '📝 Paper trade ("With money" is off)'}`)) return
+    setTradeBusy(true)
+    try {
+      const res = await apiFetch('/api/crypto/trading/enter-order', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coin, direction }),
+      })
+      const d = await res.json()
+      pushToast(d.status === 'success'
+        ? `${d.mode === 'live' ? '💰 live' : '📝 paper'} ${d.instrument} order placed: ${d.symbol} x${Math.abs(d.qty)}${d.qty < 0 ? ' short' : ''} @ ${d.price}`
+        : `Order failed: ${d.message}`)
+      if (d.status === 'success') loadPendingOrders()
+    } catch {
+      pushToast('Order failed: could not reach order server')
     }
     setTradeBusy(false)
   }
@@ -929,6 +964,23 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
             </button>
           </div>
         )}
+        {market === 'crypto' && cryptoCfg && /BTC|ETH/.test(rawSymbol) && (() => {
+          const coin = rawSymbol.includes('ETH') ? 'ETH' : 'BTC'
+          const futures = cryptoCfg.instrument === 'futures'
+          const btn = (bg) => ({ background: bg, color: '#fff', border: `1px solid ${bg}`, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 })
+          return (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+              title={`Trade in: ${futures ? 'Futures' : 'Options'} (change it in the crypto Trading panel). Exit from the order box on the chart or the Trading panel.`}>
+              <span style={{ fontSize: 11, color: '#787b86' }}>{futures ? 'Futures' : 'Options'}{cryptoCfg.withmoney ? ' 💰' : ' 📝'}</span>
+              <button onClick={() => placeCryptoOrder(coin, 'long')} disabled={tradeBusy} style={btn('#26a69a')}>
+                {tradeBusy ? '…' : futures ? `Long ${coin}` : `Buy ${coin} Call`}
+              </button>
+              <button onClick={() => placeCryptoOrder(coin, 'short')} disabled={tradeBusy} style={btn('#ef5350')}>
+                {tradeBusy ? '…' : futures ? `Short ${coin}` : `Buy ${coin} Put`}
+              </button>
+            </div>
+          )
+        })()}
       </div>
       <div ref={containerRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />
 

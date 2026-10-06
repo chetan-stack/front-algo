@@ -416,7 +416,21 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               )}
             </>
           )}
-          <label>Stop loss <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} /></label>
+          {market === 'crypto' ? (
+            // stop_loss = the DAILY STOPLOSS LIMIT: the crypto strategy stops new entries once
+            // today's losing trades reach it (stetergy.stetergy). Not a price stoploss.
+            <label title="Max losing trades per day. When today's losing trades reach this number, the crypto strategy places no new entries until tomorrow. Open positions are still managed.">
+              Daily stoploss limit <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} />
+              {data.today && (
+                <span style={{ fontSize: 11, color: Number(data.today.stoplossOrder) >= Number(config.stop_loss) ? '#ef5350' : '#787b86' }}>
+                  {' '}used today: {data.today.stoplossOrder} / {config.stop_loss || '—'}
+                  {Number(data.today.stoplossOrder) >= Number(config.stop_loss) ? ' (limit reached, no new entries)' : ''}
+                </span>
+              )}
+            </label>
+          ) : (
+            <label>Stop loss <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} /></label>
+          )}
           {market === 'india' && (
             <label>OTM offset <input style={input} value={config.set_otm ?? ''} onChange={(e) => setConfig({ ...config, set_otm: e.target.value })} /></label>
           )}
