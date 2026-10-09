@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TradeSmart AI — Automated Options & Crypto Trading</title>
+<meta name="description" content="Auto-strategies and auto-exits for NIFTY, BANKNIFTY, SENSEX options and BTC/ETH crypto. Paper trade on live prices, go live on your own broker account, pay only for what you use." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-2: #0f141c;
+    --panel: #131a24;
+    --panel-2: #18212d;
+    --line: #232e3d;
+    --text: #e6edf5;
+    --muted: #8b98a9;
+    --dim: #5d6a7b;
+    --green: #22d39a;
+    --green-dim: rgba(34, 211, 154, 0.12);
+    --red: #ff5d6c;
+    --amber: #ffb547;
+    --blue: #5aa9ff;
+    --radius: 14px;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+    --sans: "Space Grotesk", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+  .mono { font-family: var(--mono); }
+
+  /* ---------- Ticker ---------- */
+  .ticker {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-2);
+    overflow: hidden;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ticker-track {
+    display: inline-flex;
+    gap: 40px;
+    padding: 8px 0;
+    animation: scroll 40s linear infinite;
+  }
+  .ticker span b { color: var(--text); font-weight: 600; margin-right: 6px; }
+  .up { color: var(--green); }
+  .down { color: var(--red); }
+  @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+  /* ---------- Nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(10, 14, 20, 0.82);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 66px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: -0.02em; }
+  .logo-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--green), #0fa878);
+    display: grid; place-items: center;
+  }
+  .nav-links { display: flex; gap: 32px; font-size: 14px; color: var(--muted); }
+  .nav-links a:hover { color: var(--text); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 20px; border-radius: 10px;
+    font-family: var(--sans); font-weight: 600; font-size: 14px;
+    border: 1px solid transparent; cursor: pointer; transition: all .18s ease;
+  }
+  .btn-primary { background: var(--green); color: #04130d; }
+  .btn-primary:hover { background: #3be3ac; transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  .btn-ghost:hover { border-color: var(--muted); }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 88px 0 72px; position: relative; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%);
+    opacity: .35; pointer-events: none;
+  }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; position: relative; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--green-dim); color: var(--green);
+    font-family: var(--mono); font-size: 12px; margin-bottom: 22px;
+  }
+  .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(34,211,154,.2); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(34,211,154,0); } }
+  h1 { font-size: clamp(38px, 5.2vw, 60px); line-height: 1.04; letter-spacing: -0.035em; font-weight: 700; }
+  h1 em { font-style: normal; color: var(--green); }
+  .lede { margin-top: 22px; font-size: 18px; color: var(--muted); max-width: 520px; }
+  .hero-cta { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+  .hero-meta { display: flex; gap: 28px; margin-top: 40px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .hero-meta div { display: flex; align-items: center; gap: 8px; }
+  .hero-meta svg { color: var(--green); flex-shrink: 0; }
+
+  /* Terminal card */
+  .terminal {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.02) inset;
+    overflow: hidden;
+  }
+  .term-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .dots { display: flex; gap: 6px; }
+  .dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .term-body { padding: 18px; }
+  .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat small { display: block; font-size: 10.5px; color: var(--dim); font-family: var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+  .stat b { font-family: var(--mono); font-size: 17px; font-weight: 600; }
+  .chart-box { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .chart-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .log { margin-top: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.9; }
+  .log .t { color: var(--dim); margin-right: 8px; }
+  .tag { padding: 1px 6px; border-radius: 4px; font-size: 10.5px; margin-right: 6px; }
+  .tag-buy { background: var(--green-dim); color: var(--green); }
+  .tag-sell { background: rgba(255,93,108,.12); color: var(--red); }
+  .tag-ai { background: rgba(90,169,255,.12); color: var(--blue); }
+  .draw { stroke-dasharray: 900; stroke-dashoffset: 900; animation: draw 2.4s ease forwards .3s; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* ---------- Sections ---------- */
+  section { padding: 96px 0; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; color: var(--green); text-transform: uppercase; letter-spacing: .12em; }
+  h2 { font-size: clamp(30px, 3.6vw, 42px); letter-spacing: -0.03em; line-height: 1.1; margin-top: 12px; }
+  .sec-head { max-width: 640px; margin-bottom: 52px; }
+  .sec-head p { color: var(--muted); margin-top: 14px; font-size: 17px; }
+  .center { text-align: center; margin-left: auto; margin-right: auto; }
+
+  /* Features */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .feature { background: var(--bg); padding: 32px 28px; transition: background .2s; }
+  .feature:hover { background: var(--bg-2); }
+  .f-icon { width: 42px; height: 42px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); display: grid; place-items: center; color: var(--green); margin-bottom: 20px; }
+  .feature h3 { font-size: 18px; letter-spacing: -0.01em; margin-bottom: 8px; }
+  .feature p { color: var(--muted); font-size: 14.5px; }
+
+  /* How it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; counter-reset: step; }
+  .step { position: relative; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
+  .step::before {
+    counter-increment: step; content: "0" counter(step);
+    font-family: var(--mono); font-size: 13px; color: var(--green);
+    display: block; margin-bottom: 18px;
+  }
+  .step h3 { font-size: 19px; margin-bottom: 8px; }
+  .step p { color: var(--muted); font-size: 14.5px; }
+
+  /* Modes */
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .mode { border: 1px solid var(--line); border-radius: var(--radius); padding: 32px; background: var(--bg-2); }
+  .mode-tag { font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 6px; display: inline-block; margin-bottom: 16px; }
+  .mode h3 { font-size: 22px; margin-bottom: 10px; }
+  .mode p { color: var(--muted); font-size: 15px; margin-bottom: 18px; }
+  .mode ul { list-style: none; display: grid; gap: 10px; font-size: 14px; }
+  .mode li { display: flex; gap: 10px; align-items: flex-start; }
+  .mode li::before { content: "→"; font-family: var(--mono); color: var(--green); }
+
+  /* ---------- Pricing ---------- */
+  .packs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 44px; }
+  .pack { position: relative; border: 1px solid var(--line); border-radius: 16px; padding: 26px 22px; background: var(--bg-2); text-align: center; }
+  .pack.featured { border-color: rgba(34,211,154,.5); background: linear-gradient(180deg, rgba(34,211,154,.08), var(--bg-2) 60%); }
+  .pack small { display: block; font-family: var(--mono); font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  .pack b { display: block; font-size: 38px; letter-spacing: -0.03em; margin: 8px 0 4px; }
+  .pack span { font-family: var(--mono); font-size: 12.5px; color: var(--green); min-height: 18px; display: block; }
+  .rules { list-style: none; display: grid; gap: 10px; max-width: 780px; margin: 36px auto 0; font-size: 14.5px; color: var(--muted); }
+  .rules li { display: flex; gap: 10px; }
+  .rules li::before { content: "→"; font-family: var(--mono); color: var(--green); }
+  .pricing-foot { text-align: center; margin-top: 28px; font-size: 13px; color: var(--dim); }
+
+  /* Compare table */
+  .compare { margin-top: 64px; border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 560px; }
+  th, td { padding: 14px 20px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; background: var(--panel); font-size: 13px; color: var(--muted); }
+  td:not(:first-child), th:not(:first-child) { text-align: center; }
+  tr:last-child td { border-bottom: 0; }
+  .yes { color: var(--green); font-family: var(--mono); }
+  .no { color: var(--dim); font-family: var(--mono); }
+
+  /* FAQ */
+  .faq { max-width: 780px; margin: 0 auto; }
+  details { border-bottom: 1px solid var(--line); padding: 22px 0; }
+  summary { cursor: pointer; font-size: 17px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 20px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; font-family: var(--mono); color: var(--green); font-size: 20px; transition: transform .2s; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details p { color: var(--muted); margin-top: 12px; font-size: 15px; }
+
+  /* CTA */
+  .cta-band {
+    border: 1px solid var(--line); border-radius: 22px; padding: 64px 40px; text-align: center;
+    background: radial-gradient(ellipse at top, rgba(34,211,154,.14), transparent 60%), var(--bg-2);
+  }
+  .cta-band p { color: var(--muted); margin: 14px auto 30px; max-width: 520px; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--line); padding: 48px 0 40px; margin-top: 40px; }
+  .foot-top { display: flex; justify-content: space-between; gap: 32px; flex-wrap: wrap; margin-bottom: 32px; }
+  .foot-links { display: flex; gap: 28px; font-size: 14px; color: var(--muted); flex-wrap: wrap; }
+  .risk {
+    font-size: 12.5px; color: var(--dim); line-height: 1.7;
+    border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; background: var(--bg-2);
+  }
+  .risk b { color: var(--amber); }
+
+  /* ---------- Product chat ---------- */
+  .chat-fab { position: fixed; right: 20px; bottom: 20px; z-index: 50; box-shadow: 0 12px 30px -10px rgba(34,211,154,.6); }
+  .chat {
+    position: fixed; right: 20px; bottom: 76px; z-index: 50; width: 360px; max-width: calc(100vw - 32px);
+    height: 460px; max-height: calc(100vh - 110px); display: none; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,.7);
+  }
+  .chat.open { display: flex; }
+  .chat-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); font-weight: 600; font-size: 14px; }
+  .chat-head button { background: none; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+  .chat-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+  .msg { max-width: 85%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.bot { background: var(--bg-2); border: 1px solid var(--line); align-self: flex-start; }
+  .msg.me { background: var(--green-dim); color: var(--text); align-self: flex-end; }
+  .msg.err { color: var(--amber); }
+  .chat form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+  .chat input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  .chat input:focus { outline: none; border-color: var(--green); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 960px) {
+    .hero-grid, .modes { grid-template-columns: 1fr; }
+    .features, .steps { grid-template-columns: 1fr; }
+    .packs { grid-template-columns: 1fr 1fr; }
+    .nav-links { display: none; }
+  }
+  @media (max-width: 520px) {
+    .wrap { padding: 0 16px; }
+    .stat-row { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .stat b { font-size: 14px; }
+    .cta-band { padding: 44px 20px; }
+    .nav-inner .btn { padding: 9px 12px; font-size: 13px; }
+    .logo { font-size: 17px; }
+    section { padding: 72px 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Ticker (sample values) -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <span><b>SAMPLE PRICES</b></span>
+    <span><b>NIFTY</b>24,812.40 <em class="up">+0.42%</em></span>
+    <span><b>BANKNIFTY</b>52,306.15 <em class="down">−0.18%</em></span>
+    <span><b>SENSEX</b>81,440.90 <em class="up">+0.37%</em></span>
+    <span><b>NIFTY PCR</b>1.08</span>
+    <span><b>INDIA VIX</b>13.42 <em class="down">−2.1%</em></span>
+    <span><b>BANKNIFTY MAX PAIN</b>52,300</span>
+    <span><b>SAMPLE PRICES</b></span>
+    <span><b>NIFTY</b>24,812.40 <em class="up">+0.42%</em></span>
+    <span><b>BANKNIFTY</b>52,306.15 <em class="down">−0.18%</em></span>
+    <span><b>SENSEX</b>81,440.90 <em class="up">+0.37%</em></span>
+    <span><b>NIFTY PCR</b>1.08</span>
+    <span><b>INDIA VIX</b>13.42 <em class="down">−2.1%</em></span>
+    <span><b>BANKNIFTY MAX PAIN</b>52,300</span>
+  </div>
+</div>
+
+<!-- Nav -->
+<nav>
+  <div class="wrap nav-inner">
+    <a href="#" class="logo">
+      <span class="logo-mark">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#04130d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
+      </span>
+      TradeSmart AI
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <div style="display:flex; gap:10px;"><a href="/" class="btn btn-ghost">Login</a><a href="/?signup" class="btn btn-primary">Create account</a></div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="pill"><i></i> NIFTY · BANKNIFTY · SENSEX · BTC · ETH</div>
+      <h1>Your options strategy,<br/><em>running on autopilot.</em></h1>
+      <p class="lede">Turn on the auto-strategy and it trades index options and crypto for you, with an auto-exit watching every position. Practice on live prices in paper mode, then switch to your own broker account when you're ready.</p>
+      <div class="hero-cta">
+        <a href="/?signup" class="btn btn-primary">
+          Create free account
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </a>
+        <a href="#" class="btn btn-ghost" data-chat>Ask our assistant</a>
+      </div>
+      <div class="hero-meta">
+        <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>No monthly plan, pay per use</div>
+        <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Your funds stay with your broker</div>
+        <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Auto-exit on every position</div>
+      </div>
+    </div>
+
+    <!-- Terminal mock -->
+    <div class="terminal">
+      <div class="term-head">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <span>auto-strategy · NIFTY 24850 CE</span>
+        <span class="up">● RUNNING</span>
+      </div>
+      <div class="term-body">
+        <div class="stat-row">
+          <div class="stat"><small>Day P&amp;L</small><b class="up">+₹4,280</b></div>
+          <div class="stat"><small>Wallet</small><b>₹184</b></div>
+          <div class="stat"><small>Mode</small><b>PAPER</b></div>
+        </div>
+        <div class="chart-box">
+          <div class="chart-label"><span>ATM payoff · expiry</span><span>sample data</span></div>
+          <svg viewBox="0 0 400 130" width="100%" height="130" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#22d39a" stop-opacity=".35"/>
+                <stop offset="100%" stop-color="#22d39a" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="80" x2="400" y2="80" stroke="#232e3d" stroke-dasharray="4 4"/>
+            <line x1="200" y1="0" x2="200" y2="130" stroke="#232e3d" stroke-dasharray="4 4"/>
+            <path d="M0,104 L170,104 L260,30 L400,30 L400,130 L0,130 Z" fill="url(#g)" opacity=".6"/>
+            <polyline class="draw" points="0,104 170,104 260,30 400,30" fill="none" stroke="#22d39a" stroke-width="2.5"/>
+            <polyline class="draw" points="0,60 40,72 80,58 120,76 160,66 200,52 240,62 280,44 320,50 360,34 400,40" fill="none" stroke="#5aa9ff" stroke-width="1.5" opacity=".7"/>
+            <circle cx="200" cy="80" r="4" fill="#ffb547"/>
+          </svg>
+        </div>
+        <div class="log">
+          <div><span class="t">09:21:04</span><span class="tag tag-ai">AI</span>24,780 support held on 5m — bias bullish</div>
+          <div><span class="t">09:21:06</span><span class="tag tag-buy">BUY</span>NIFTY 24850 CE × 75 @ 112.40</div>
+          <div><span class="t">10:47:32</span><span class="tag tag-sell">EXIT</span>Target hit @ 169.45 · auto exit</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Features -->
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">// Features</div>
+      <h2>Everything you need to trade index options with discipline.</h2>
+      <p>One dashboard for auto-trading, exits, charts and AI, for Indian index options and crypto.</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+        <h3>India auto-strategy</h3>
+        <p>The bot watches NIFTY, BANKNIFTY and SENSEX and enters options trades by its rules, on your own AngelOne account. Set target, stoploss and a daily loss limit.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/><path d="M19 8l2 2-2 2M5 8l-2 2 2 2"/></svg></div>
+        <h3>AI Chat</h3>
+        <p>Ask about levels, news or a chart. The AI reads live candles and answers in plain English, with support/resistance you can put on the chart. It never places orders.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>
+        <h3>Multi-screen charts</h3>
+        <p>Up to four charts side by side, with saved screen layouts. Buy or exit straight from the chart, for India options and crypto.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></div>
+        <h3>Auto-exit protection</h3>
+        <p>A separate exit bot closes every position at target or stoploss, and squares off intraday positions at 15:10 so nothing is left overnight by mistake.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5z"/><path d="M20.5 10H19V8.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/><path d="M9.5 14c.83 0 1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5S8 21.33 8 20.5v-5c0-.83.67-1.5 1.5-1.5z"/><path d="M3.5 14H5v1.5c0 .83-.67 1.5-1.5 1.5S2 16.33 2 15.5 2.67 14 3.5 14z"/><path d="M14 14.5c0-.83.67-1.5 1.5-1.5h5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-5c-.83 0-1.5-.67-1.5-1.5z"/><path d="M10 9.5C10 10.33 9.33 11 8.5 11h-5C2.67 11 2 10.33 2 9.5S2.67 8 3.5 8h5c.83 0 1.5.67 1.5 1.5z"/></svg></div>
+        <h3>Crypto trading</h3>
+        <p>BTC and ETH futures and options on Delta Exchange, with the same auto-strategy, auto-exit and daily stoploss limit.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <h3>Your money, your account</h3>
+        <p>We never hold your funds. Live orders go through your own broker connection. The order book, failed orders and notifications show exactly what happened.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how" style="background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">// How it works</div>
+      <h2>From sign-up to first trade in minutes.</h2>
+    </div>
+    <div class="steps">
+      <div class="step" style="background: var(--bg);">
+        <h3>Top up your wallet</h3>
+        <p>Add ₹50 to ₹1000. Charts and manual orders are free; auto orders, auto exits and AI messages take a few rupees each.</p>
+      </div>
+      <div class="step" style="background: var(--bg);">
+        <h3>Paper trade on live data</h3>
+        <p>Turn on the strategy in paper mode. It runs on live prices with simulated orders. Watch the P&amp;L and tune target and stoploss.</p>
+      </div>
+      <div class="step" style="background: var(--bg);">
+        <h3>Connect & go live</h3>
+        <p>When you're confident, link your AngelOne or Delta Exchange account. The bot then places real orders in your own account.</p>
+      </div>
+    </div>
+
+    <div class="modes" style="margin-top: 48px;">
+      <div class="mode" style="background: var(--bg);">
+        <span class="mode-tag" style="background: rgba(90,169,255,.12); color: var(--blue);">PAPER MODE</span>
+        <h3>Practice with zero risk</h3>
+        <p>Every paper account runs on a shared real-time market feed, so your simulated fills reflect actual market prices.</p>
+        <ul>
+          <li>Real-time prices, simulated orders</li>
+          <li>Virtual capital to test position sizing</li>
+          <li>Full strategy &amp; P&amp;L history</li>
+        </ul>
+      </div>
+      <div class="mode" style="background: var(--bg);">
+        <span class="mode-tag" style="background: var(--green-dim); color: var(--green);">LIVE MODE</span>
+        <h3>Trade on your own account</h3>
+        <p>Live users connect their own AngelOne (India) or Delta Exchange (crypto) account. Orders go from your connection.</p>
+        <ul>
+          <li>Orders placed in your own demat account</li>
+          <li>Rejected orders listed with the broker's reason</li>
+          <li>Stop the bot anytime</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section id="pricing">
+  <div class="wrap">
+    <div class="sec-head center" style="text-align:center;">
+      <div class="eyebrow">// Pricing</div>
+      <h2>No monthly plan. Pay only when you use it.</h2>
+      <p>Top up a prepaid wallet once. Every auto order, auto exit and AI message takes a small amount from your balance.</p>
+    </div>
+
+    <div class="packs">
+      <div class="pack"><small>Top up</small><b>₹50</b><span>&nbsp;</span></div>
+      <div class="pack"><small>Top up</small><b>₹200</b><span>&nbsp;</span></div>
+      <div class="pack featured"><small>Top up</small><b>₹500</b><span>+₹25 bonus</span></div>
+      <div class="pack"><small>Top up</small><b>₹1000</b><span>+₹100 bonus</span></div>
+    </div>
+
+    <div class="compare">
+      <table>
+        <thead>
+          <tr><th>What you use</th><th>Paper</th><th>Live</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Charts, order book, notifications, manual orders</td><td class="yes">Free</td><td class="yes">Free</td></tr>
+          <tr><td>Auto order (the bot places an entry)</td><td class="mono">₹1 / order</td><td class="mono">₹5 / order</td></tr>
+          <tr><td>Auto exit (target, stoploss or end-of-day close)</td><td class="mono">₹1 / exit</td><td class="mono">₹3 / exit</td></tr>
+          <tr><td>AI Chat</td><td class="mono">₹2 / message</td><td class="mono">₹2 / message</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <ul class="rules">
+      <li>At ₹0 balance new auto orders pause, but your open positions keep their auto exit. You are never left unprotected.</li>
+      <li>Wallet credit can't be withdrawn and is used only on TradeSmart AI.</li>
+      <li>This is a platform usage fee, not brokerage. Brokerage, exchange charges and taxes are charged separately by your broker.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" style="padding-top: 40px;">
+  <div class="wrap">
+    <div class="sec-head center" style="text-align:center;">
+      <div class="eyebrow">// FAQ</div>
+      <h2>Questions, answered.</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Do you hold my money?</summary>
+        <p>No. Your capital stays in your own demat/trading account. In live mode, the bot places orders through your own broker connection — we never receive or move your funds.</p>
+      </details>
+      <details>
+        <summary>What's the difference between paper and live mode?</summary>
+        <p>Paper mode simulates trades on a real-time shared market feed with virtual capital. Live mode places actual orders in your own account and uses market data from your own broker login.</p>
+      </details>
+      <details>
+        <summary>How do I get started?</summary>
+        <p>Click Create account and choose a username and password. Once your account is approved you can sign in and start in paper mode. To trade live, add your own AngelOne or Delta Exchange keys in the Broker Account tab.</p>
+      </details>
+      <details>
+        <summary>Which brokers are supported?</summary>
+        <p>AngelOne for Indian index options and Delta Exchange for crypto.</p>
+      </details>
+      <details>
+        <summary>Can I stop the bot at any time?</summary>
+        <p>Yes. You can turn the auto-strategy off whenever you want. Intraday positions are squared off automatically at 15:10.</p>
+      </details>
+      <details>
+        <summary>Is there a monthly subscription?</summary>
+        <p>No. You top up a prepaid wallet (₹50 to ₹1000) and pay only for what you use: ₹5 per live auto order, ₹3 per live auto exit, ₹2 per AI message. Paper trading costs ₹1 per auto order or exit.</p>
+      </details>
+      <details>
+        <summary>What happens when my balance reaches ₹0?</summary>
+        <p>New auto orders pause until you top up. Positions you already have still get their auto exit, so you are never left unprotected.</p>
+      </details>
+      <details>
+        <summary>Can I get my wallet balance back?</summary>
+        <p>No. Wallet credit is used only on TradeSmart AI and can't be withdrawn.</p>
+      </details>
+      <details>
+        <summary>Does the AI guarantee profits?</summary>
+        <p>No. The AI explains what the charts and news are showing; it does not predict the market. All trading decisions and their outcomes remain your responsibility.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section style="padding-top: 40px;">
+  <div class="wrap">
+    <div class="cta-band">
+      <div class="eyebrow">// Get started</div>
+      <h2>Test your first strategy today.</h2>
+      <p>Start in paper mode on live prices for a few rupees per trade. Go live only when you're ready.</p>
+      <div class="hero-cta" style="justify-content:center;">
+        <a href="/?signup" class="btn btn-primary">Create account</a>
+        <a href="/" class="btn btn-ghost">Login</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <a href="#" class="logo">
+        <span class="logo-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#04130d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg></span>
+        TradeSmart AI
+      </a>
+      <div class="foot-links">
+        <a href="#">Terms</a>
+        <a href="#">Privacy</a>
+        <a href="#">Refund policy</a>
+      </div>
+    </div>
+    <div class="risk">
+      <b>Risk disclosure:</b> Trading in Futures &amp; Options involves substantial risk and is not suitable for every investor. SEBI studies have found that a large majority of individual F&amp;O traders incur net losses. Past performance, sample P&amp;L figures and charts shown on this page are illustrative only and do not guarantee future results. TradeSmart AI is a software tool and does not provide investment advice. Please assess your risk tolerance before trading.
+    </div>
+    <p style="margin-top: 22px; font-size: 12.5px; color: var(--dim);">© 2026 TradeSmart AI. All rights reserved.</p>
+  </div>
+</footer>
+
+<!-- Product chat -->
+<button class="btn btn-primary chat-fab" id="chatOpen" aria-controls="chat">Ask about TradeSmart AI</button>
+<div class="chat" id="chat" role="dialog" aria-label="TradeSmart AI assistant">
+  <div class="chat-head"><span>TradeSmart AI assistant</span><button id="chatClose" aria-label="Close">×</button></div>
+  <div class="chat-msgs" id="chatMsgs" aria-live="polite">
+    <div class="msg bot">Hi! Ask me anything about TradeSmart AI: features, pricing, paper vs live.</div>
+  </div>
+  <form id="chatForm">
+    <input id="chatInput" maxlength="300" placeholder="Type your question…" autocomplete="off" aria-label="Your question" />
+    <button class="btn btn-primary" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+  const CHAT_API = "https://backend.tradesmartai.in/api/public/product-chat";
+  const chat = document.getElementById("chat"), msgs = document.getElementById("chatMsgs");
+  const input = document.getElementById("chatInput"), form = document.getElementById("chatForm");
+  const history = [];  // the backend only reads the last 4 messages
+
+  function openChat() { chat.classList.add("open"); input.focus(); }
+  document.querySelectorAll("[data-chat], #chatOpen").forEach(b => b.addEventListener("click", e => { e.preventDefault(); openChat(); }));
+  document.getElementById("chatClose").addEventListener("click", () => chat.classList.remove("open"));
+  document.addEventListener("keydown", e => { if (e.key === "Escape") chat.classList.remove("open"); });
+
+  function add(cls, text) {
+    const d = document.createElement("div");
+    d.className = "msg " + cls;
+    d.textContent = text;  // plain text only, never HTML
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+    return d;
+  }
+
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q || form.dataset.busy) return;
+    form.dataset.busy = "1";
+    input.value = "";
+    add("me", q);
+    history.push({ role: "user", content: q });
+    const wait = add("bot", "Thinking…");
+    try {
+      const r = await fetch(CHAT_API, { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ messages: history.slice(-4) }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || "The assistant is unavailable right now.");
+      wait.textContent = data.answer;
+      history.push({ role: "assistant", content: data.answer });
+    } catch (err) {
+      history.pop();
+      wait.classList.add("err");
+      wait.textContent = err.message === "Failed to fetch" ? "Can't reach the assistant right now." : err.message;
+    }
+    delete form.dataset.busy;
+  });
+</script>
+</body>
+</html>

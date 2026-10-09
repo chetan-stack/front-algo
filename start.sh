@@ -12,13 +12,12 @@ mkdir -p logs
 # memory until free RAM hit ~15MB and requests started failing. Sweep by
 # name too (scoped to this project's own path, not every server.py on the
 # machine) so an orphan can't survive a restart just because .runpids forgot it.
-pkill -f "$(pwd)/server.py" 2>/dev/null
+# (By working folder, see project_procs.sh: the old "$(pwd)/server.py" pattern
+# never matched the relative "python server.py" command line.)
+. ./project_procs.sh
+stop_pids $(project_pids server.py)
 pkill -f "$(pwd)/node_modules/.bin/vite" 2>/dev/null
 sleep 1
-# Confirmed live: a stuck orphan under memory pressure ignored plain SIGTERM
-# entirely (sat there unchanged) and only -9 actually removed it — so don't
-# assume the pkill above worked, force anything still standing.
-pkill -9 -f "$(pwd)/server.py" 2>/dev/null
 pkill -9 -f "$(pwd)/node_modules/.bin/vite" 2>/dev/null
 if [ -f .runpids ]; then
   kill $(cat .runpids) 2>/dev/null

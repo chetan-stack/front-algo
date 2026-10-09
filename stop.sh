@@ -1,12 +1,13 @@
 #!/bin/bash
 cd "$(dirname "$0")"
+. ./project_procs.sh
+# frontend + tunnel (and the backend) from start.sh's last run
 if [ -f .runpids ]; then
   kill $(cat .runpids) 2>/dev/null
   rm .runpids
-  echo "stopped."
-else
-  echo "no .runpids found — nothing to stop (or it wasn't started with start.sh)"
 fi
+# every backend and analyst of this project, including orphans .runpids forgot
+stop_pids $(project_pids server.py) $(project_pids analyst.py)
 
 # Per-user trading dashboards started by start.sh aren't tracked in .runpids
 # (they're per-port, not one fixed set) -- kill by port instead, same as
@@ -20,3 +21,10 @@ while IFS='|' read -r webview_port ai_port crypto_port; do
   done
 done
 echo "stopped dashboards."
+
+left="$(project_pids server.py) $(project_pids analyst.py)"
+if [ -n "${left// /}" ]; then
+  echo "STILL RUNNING (pids): $left"
+else
+  echo "stopped: backend, analysts, frontend, tunnel, dashboards. (Strategy/exit bots: Admin panel.)"
+fi

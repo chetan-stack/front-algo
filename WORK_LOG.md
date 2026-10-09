@@ -6,6 +6,75 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-09 — Admin: restart / stop all CRYPTO strategy + exit bots (uncommitted)
+
+- server.py: `/api/admin/bots/restart-all` and `/stop-all` take `?market=india` (default, unchanged) or
+  `crypto` (crypto_strategy + crypto_exit = stetergy.py / stetergy_exit.py). `_bulk_accounts()`: crypto only
+  for users with a crypto_port, each account folder once (the shared root fallback would otherwise restart
+  chetan's crypto bots once per user without a crypto account). Crypto spacing 2s.
+- Admin.jsx: yellow "Restart all crypto strategy + exit bots" and outlined "Stop all crypto bots" next to
+  the India buttons; same confirm + per-user 🟢/🔴 result.
+- Test: test_restart_all.py 11/11 (India unchanged + crypto). vite build ok. NEEDS: backend restart.
+
+## 2026-10-09 — stop.sh / start.sh now really stop the backend + analysts (uncommitted)
+
+- Why orphans piled up (6 server.py from Oct 5–9): the backend often survives SIGTERM (closes its port,
+  the AngelOne tick thread keeps the process alive); stop.sh only sent SIGTERM to .runpids and forgot them;
+  start.sh's `pkill -f "$(pwd)/server.py"` never matched the relative "python server.py"; stop.sh
+  never stopped the analysts.
+- New `project_procs.sh` (sourced by both): `project_pids` finds this project's server.py / analyst.py by
+  working folder; `stop_pids` = SIGTERM, then SIGKILL after 5s.
+- stop.sh stops every backend + analyst (+ .runpids frontend/tunnel, dashboards by port as before) and
+  prints what's STILL RUNNING, or "stopped" only when nothing is. start.sh's orphan sweep uses it too.
+  Strategy/exit bots still stopped from the Admin panel, unchanged.
+- Verified: ran stop.sh with 6 orphan backends + 2 analysts running → nothing from the project left.
+- Same day: closed kamal #158 / testuser #314 (SENSEX 72400CE) at live 629.05 (bots were stopped).
+  Backup ~/tradingview-backups/2026-10-09-pre-close-open/.
+
+## 2026-10-08 — Website "Create account" (pending approval) + users add their own broker keys (uncommitted)
+
+- Signup: `POST /api/auth/signup` -> new `signups` table in users.db (auth.py), NOT `users`, so bots/
+  restart-all/smoke test/analyst never see a pending account. Username ^[a-z0-9_]{3,20}$ (it becomes a
+  folder name), password 8-128, max 20 pending. Login of a pending user -> 403 "waiting for approval".
+- Admin -> "Waiting for approval": Approve (`POST /api/admin/signups/{u}/approve`) moves the row into
+  users, writes a paper document.py + INDIA_DEFAULT_CONFIG, starts dashboard + AI bots (~400MB per user;
+  check memory first). Reject = `DELETE /api/admin/signups/{u}`.
+- "Broker Account" tab (src/BrokerAccount.jsx): `GET /api/account/broker` (secrets never returned, key
+  masked), `PUT /api/account/broker/india|crypto` -> reuses admin_update_credentials / admin_update_crypto_
+  credentials; Telegram kept; a running strategy is restarted to pick up keys. withmoney stays off.
+- Landing page: "Create account" -> /?signup (Login.jsx opens in signup mode). Chatbot prompt knows the flow.
+- Tests: test_signup.py (new), test_restart_all 7/7, test_product_chat pass. vite build ok.
+- NEEDS: backend restart (./start.sh) — until then the signup form gets "Not Found".
+
+## 2026-10-08 — TradeSmart AI landing page + public product chatbot (uncommitted)
+
+- public/landing.html (user's design, moved from repo root): served at https://app.tradesmartai.in/landing.html.
+  Monthly plans/checkout form removed -> pay-per-use wallet (top-ups 50/200/500+25/1000+100; auto order
+  1 paper/5 live, auto exit 1/3, AI 2/msg). Features/FAQ rewritten to what actually exists. No WhatsApp/
+  email/contact. Prices are display-only: no wallet/deduction exists yet in the backend or bots.
+- Chat widget on the page -> `POST /api/public/product-chat` (ai_chat.py, no auth): haiku, no tools
+  (`claude_code(..., tools="")`), short PRODUCT_SYSTEM prompt, last 4 msgs x 300 chars, answer capped 600
+  chars. Limits via _count(): 10/IP/day (CF-Connecting-IP) + 300/day total, refunded on failure.
+  Prices live in PRODUCT_SYSTEM *and* landing.html — change both together.
+- Landing chat has its own process slot (`_public_slots`, 1) separate from the dashboard AI's 2 `_slots`.
+- Test: test_product_chat.py (stubbed Claude) passes. Real haiku call: ~3s, ~200 chars, declines market questions.
+- NEEDS: backend restart for the new route (until then the chat shows "unavailable").
+
+## 2026-10-07 — India: paper positions squared off at 15:10 (uncommitted, pythonProject)
+
+- store_exit.py exitstetergy / exitstetergysell: `elif live_trade.eod_due()` after the live block, so PAPER
+  positions (longs, and shorts with their hedge) also exit at 15:10 with "Exit by EOD square-off". Live
+  unchanged (intraday live squared off; adopted CARRYFORWARD kept). A target/stoploss hit at the same
+  check keeps its own reason.
+- Why: paper positions were carried overnight; 3 NIFTY06OCT positions (paras #304, pulkit #45, vijay #47)
+  got stuck after expiry (no price → no exit, ~1,000 failed checks/hour). Those 3 still need closing by hand.
+- Entry cutoff: storesupportzone.storesupportlevel skips checkema_levels (all entries) from 15:00
+  (ENTRY_CUTOFF); exitwithrsialert (open-position management) still runs. test_entry_cutoff.py 4/4.
+- Deleted the 3 stuck NIFTY06OCT2622700CE positions (paras #304, pulkit #45, vijay #47) + their storeorder
+  entries. Backup: ~/tradingview-backups/2026-10-07-pre-delete-expired/.
+- Tests: test_index_points_flow.py 20/20 (paper long + short EOD), all suites pass, also with the clock at 15:20.
+- NEEDS: Admin → "Restart all strategy + exit bots" (both the strategy and the exit bot changed).
+
 ## 2026-10-06 — crypto chart order buttons + crypto daily stoploss limit display (uncommitted; India untouched)
 
 - Crypto chart: "Long BTC / Short BTC" (futures) or "Buy BTC Call / Buy BTC Put" (options), chosen by the

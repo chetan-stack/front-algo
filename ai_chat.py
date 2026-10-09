@@ -21,7 +21,7 @@ import threading
 import traceback
 
 import requests
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import auth
@@ -133,9 +133,9 @@ def _image_block(image):
     return None
 
 
-def claude_code(content, system, model=None):
+def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_slots):
     """Run one headless Claude Code turn. Yields ("text", delta), ("status", msg), ("error", msg)."""
-    if not _slots.acquire(timeout=60):
+    if not slots.acquire(timeout=60):
         yield "error", "AI is busy with other questions — try again in a minute."
         return
     proc = None
@@ -143,7 +143,7 @@ def claude_code(content, system, model=None):
     try:
         proc = subprocess.Popen(
             [CLAUDE, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-             "--include-partial-messages", "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+             "--include-partial-messages", "--tools", tools, *(["--allowedTools", tools] if tools else []),
              "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
              "--system-prompt", system, *(["--model", model] if model else [])],
             cwd=CWD, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, text=True,
@@ -178,7 +178,7 @@ def claude_code(content, system, model=None):
         if proc and proc.poll() is None:  # browser left / timeout: don't leave it running
             proc.kill()
         errlog.close()
-        _slots.release()
+        slots.release()
 
 
 def ask_claude(user, prompt, system, image=None):
@@ -265,3 +265,60 @@ def claude_chat(payload: dict = Body(...), user=Depends(auth.get_current_user)):
 @router.get("/api/ai/quota")
 def ai_quota(user=Depends(auth.get_current_user)):
     return {"left": None if user["is_admin"] else DAILY_LIMIT - _count(user, 0), "limit": DAILY_LIMIT}
+
+
+# Landing page (public/landing.html) product chatbot. No login, so: no tools,
+# the cheapest model, a tiny prompt, short answers, per-IP + global daily caps.
+PRODUCT_SYSTEM = """You are the help assistant on the TradeSmart AI website. Answer ONLY questions about TradeSmart AI.
+Reply in plain text, at most 3 short sentences (about 60 words). No markdown. Never give market predictions or trade advice.
+If a question is not about TradeSmart AI, say in one line that you can only help with TradeSmart AI.
+
+Facts:
+- TradeSmart AI is a trading dashboard for Indian index options (NIFTY, BANKNIFTY, SENSEX) and crypto (BTC, ETH).
+- India auto-strategy: a bot that enters options trades by its rules, through the user's own AngelOne account.
+- Auto-exit: closes positions at target or stoploss, and squares off at 15:10 IST (end of day).
+- Crypto: BTC/ETH futures and options through the user's own Delta Exchange account.
+- AI Chat: explains levels, news and charts using live candles. It does not place orders.
+- Charts with multi-screen saved layouts, order book, failed-orders list, notifications.
+- Paper mode: simulated trades on live prices. Live mode: real orders in the user's own broker account. TradeSmart AI never holds user funds.
+- Getting started: click Create account on the website and pick a username and password. After an admin approves it, sign in and start in paper mode. For live trading, add your own AngelOne or Delta Exchange API keys in the dashboard's Broker Account tab.
+- Pricing is pay-per-use from a prepaid wallet, no monthly plan. Top-ups: Rs 50, 200, 500 (+25 bonus), 1000 (+100 bonus).
+- Prices: charts, order book, notifications and manual orders are free. Auto order Rs 1 paper / Rs 5 live. Auto exit Rs 1 paper / Rs 3 live. AI Chat Rs 2 per message.
+- At Rs 0 balance, new auto orders pause but open positions keep their auto-exit.
+- Credits are not withdrawable, only usable on TradeSmart AI. The fee is a platform usage fee; broker charges are separate.
+- Trading F&O is risky; TradeSmart AI is a software tool, not investment advice."""
+PUBLIC_IP_LIMIT = 10  # questions per visitor IP per IST day
+PUBLIC_TOTAL_LIMIT = 300  # all visitors per IST day: caps Claude usage from the open internet
+PUBLIC_MAX_ANSWER = 600  # chars; the prompt asks for ~60 words, this is the backstop
+# Own slot, so a slow dashboard question (web search, up to 4 min) never blocks website visitors.
+# ponytail: 1 process (~250MB) = ~20 answers/min; move to the Claude API before raising it.
+_public_slots = threading.Semaphore(1)
+
+
+@router.post("/api/public/product-chat")
+def product_chat(request: Request, payload: dict = Body(...)):
+    history = [{"role": m["role"], "content": m["content"].strip()[:300]} for m in payload.get("messages") or []
+               if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+               and isinstance(m.get("content"), str) and m["content"].strip()][-4:]
+    if not history or history[-1]["role"] != "user":
+        raise HTTPException(400, "messages must end with the user's question")
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+    keys = [{"username": f"ip:{ip}"}, {"username": "public:total"}]
+    for key, limit in zip(keys, (PUBLIC_IP_LIMIT, PUBLIC_TOTAL_LIMIT)):
+        if _count(key, 1) > limit:
+            for k in keys[:keys.index(key) + 1]:
+                _count(k, -1)
+            raise HTTPException(429, "The assistant has answered its limit for today. Please try again tomorrow.")
+    prompt = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in history)
+    text, errors = [], []
+    for kind, value in claude_code([{"type": "text", "text": prompt}], PRODUCT_SYSTEM, "haiku", tools="", slots=_public_slots):
+        if kind == "text":
+            text.append(value)
+        elif kind == "error":
+            errors.append(value)
+    answer = "".join(text).strip()
+    if errors or not answer:
+        for k in keys:
+            _count(k, -1)
+        raise HTTPException(502, "The assistant is unavailable right now. Please try again.")
+    return {"answer": answer[:PUBLIC_MAX_ANSWER]}

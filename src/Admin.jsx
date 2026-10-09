@@ -43,7 +43,31 @@ export default function Admin({ onActAsUser }) {
     if (data.success) setUsers(data.users)
   }
 
-  useEffect(() => { loadUsers() }, [])
+  // Website "Create account" signups waiting for approval (approving starts their paper bots).
+  const [signups, setSignups] = useState([])
+  const [signupMsg, setSignupMsg] = useState('')
+  async function loadSignups() {
+    const res = await apiFetch('/api/admin/signups')
+    const data = await res.json()
+    if (data.success) setSignups(data.signups)
+  }
+
+  async function decideSignup(name, approve) {
+    if (!approve && !confirm(`Reject and delete the signup "${name}"?`)) return
+    setSignupMsg(approve ? `Approving ${name}… starting their bots` : '')
+    try {
+      const res = await apiFetch(`/api/admin/signups/${name}${approve ? '/approve' : ''}`, { method: approve ? 'POST' : 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'failed')
+      setSignupMsg(approve ? `${name} approved. Dashboard bot: ${data.webview_alive ? '🟢' : '🔴'}, AI bot: ${data.ai_alive ? '🟢' : '🔴'}` : `${name} rejected`)
+      loadSignups()
+      loadUsers()
+    } catch (err) {
+      setSignupMsg(`Error: ${err.message}`)
+    }
+  }
+
+  useEffect(() => { loadUsers(); loadSignups() }, [])
 
   async function openManage(u) {
     if (managingUser === u.username) {
@@ -114,15 +138,17 @@ export default function Admin({ onActAsUser }) {
 
   // Every user's auto-strategy + auto-exit in one go (server: /api/admin/bots/restart-all).
   // Takes ~1 min: real accounts are spaced 8s apart for AngelOne's login limit.
-  async function restartAllBots() {
-    if (!confirm('Restart auto-strategy and auto-exit for ALL users?\n\nOpen positions are kept; the exit bot picks them up again. Takes about a minute.')) return
-    setRestartAll({ busy: true, msg: 'Restarting all strategy + exit bots… (about a minute)' })
+  // market = 'india' (default) | 'crypto' (crypto strategy + crypto exit, crypto accounts only)
+  async function restartAllBots(market = 'india') {
+    const what = market === 'crypto' ? 'crypto strategy and crypto exit' : 'auto-strategy and auto-exit'
+    if (!confirm(`Restart ${what} for ALL ${market === 'crypto' ? 'crypto accounts' : 'users'}?\n\nOpen positions are kept; the exit bot picks them up again. Takes about a minute.`)) return
+    setRestartAll({ busy: true, msg: `Restarting all ${market === 'crypto' ? 'crypto ' : ''}strategy + exit bots… (about a minute)` })
     try {
-      const res = await apiFetch('/api/admin/bots/restart-all', { method: 'POST' })
+      const res = await apiFetch(`/api/admin/bots/restart-all?market=${market}`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'restart failed')
       const byUser = {}
-      for (const r of data.results) (byUser[r.user] ||= []).push(`${r.bot === 'store_exit' ? 'exit' : 'strategy'} ${r.alive ? '🟢' : '🔴'}`)
+      for (const r of data.results) (byUser[r.user] ||= []).push(`${market === 'crypto' ? 'crypto ' : ''}${r.bot.endsWith('exit') ? 'exit' : 'strategy'} ${r.alive ? '🟢' : '🔴'}`)
       setRestartAll({ busy: false, msg: Object.entries(byUser).map(([u, v]) => `${u}: ${v.join(', ')}`).join(' · ') })
       loadUsers()
     } catch (err) {
@@ -130,11 +156,12 @@ export default function Admin({ onActAsUser }) {
     }
   }
 
-  async function stopAllBots() {
-    if (!confirm('Stop auto-strategy and auto-exit for ALL users?\n\nNo new entries, and open positions are NOT watched for target/stoploss until the bots are started again (paper positions have no broker stoploss).')) return
-    setRestartAll({ busy: true, msg: 'Stopping all strategy + exit bots…' })
+  async function stopAllBots(market = 'india') {
+    const what = market === 'crypto' ? 'crypto strategy and crypto exit' : 'auto-strategy and auto-exit'
+    if (!confirm(`Stop ${what} for ALL ${market === 'crypto' ? 'crypto accounts' : 'users'}?\n\nNo new entries, and open positions are NOT watched for target/stoploss until the bots are started again (paper positions have no broker stoploss).`)) return
+    setRestartAll({ busy: true, msg: `Stopping all ${market === 'crypto' ? 'crypto ' : ''}strategy + exit bots…` })
     try {
-      const res = await apiFetch('/api/admin/bots/stop-all', { method: 'POST' })
+      const res = await apiFetch(`/api/admin/bots/stop-all?market=${market}`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'stop failed')
       const still = data.results.filter((r) => r.alive).map((r) => `${r.user} ${r.bot}`)
@@ -330,16 +357,41 @@ export default function Admin({ onActAsUser }) {
         )}
       </div>
 
+      {(signups.length > 0 || signupMsg) && (
+        <div style={box}>
+          <h3 style={{ color: '#d1d4dc', margin: '0 0 8px' }}>Waiting for approval ({signups.length})</h3>
+          {signups.map((s) => (
+            <div key={s.username} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', fontSize: 13 }}>
+              <span style={{ color: '#d1d4dc', minWidth: 120 }}>{s.username}</span>
+              <span style={{ color: '#787b86' }}>{s.created} UTC</span>
+              <button onClick={() => decideSignup(s.username, true)}
+                style={{ background: '#26a69a', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 12 }}>Approve</button>
+              <button onClick={() => decideSignup(s.username, false)}
+                style={{ background: 'transparent', color: '#ef5350', border: '1px solid #2a2e39', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 12 }}>Reject</button>
+            </div>
+          ))}
+          {signupMsg && <div style={{ fontSize: 12, color: '#d1d4dc', marginTop: 6 }}>{signupMsg}</div>}
+        </div>
+      )}
+
       <div style={box}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <h3 style={{ color: '#d1d4dc', margin: 0 }}>Users</h3>
-          <button onClick={restartAllBots} disabled={restartAll.busy}
+          <button onClick={() => restartAllBots()} disabled={restartAll.busy}
             style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
             {restartAll.busy ? 'Working…' : 'Restart all strategy + exit bots'}
           </button>
-          <button onClick={stopAllBots} disabled={restartAll.busy}
+          <button onClick={() => stopAllBots()} disabled={restartAll.busy}
             style={{ background: '#ef5350', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
             Stop all strategy + exit bots
+          </button>
+          <button onClick={() => restartAllBots('crypto')} disabled={restartAll.busy}
+            style={{ background: '#f0b90b', color: '#131722', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer', fontWeight: 600 }}>
+            Restart all crypto strategy + exit bots
+          </button>
+          <button onClick={() => stopAllBots('crypto')} disabled={restartAll.busy}
+            style={{ background: 'transparent', color: '#f0b90b', border: '1px solid #f0b90b', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
+            Stop all crypto bots
           </button>
           {restartAll.msg && <span style={{ fontSize: 12, color: '#d1d4dc' }}>{restartAll.msg}</span>}
         </div>

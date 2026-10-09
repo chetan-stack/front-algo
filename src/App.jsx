@@ -11,6 +11,7 @@ import Analysis from './Analysis'
 import Notifications from './Notifications'
 import OrderBook from './OrderBook'
 import FailedOrders from './FailedOrders'
+import BrokerAccount from './BrokerAccount'
 
 const LAYOUTS = {
   1: { cols: 1, rows: 1 },
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'alerts', label: 'Alerts' },
   { id: 'ai-chat', label: 'AI Chat' },
+  { id: 'broker', label: 'Broker Account' },
 ]
 
 export default function App() {
@@ -157,6 +159,7 @@ export default function App() {
       return <div style={{ flex: 1, minHeight: 0 }}><AiChatTab chartContext={[...new Set(ctx)].join(', ')} onViewOnChart={viewOnChart} /></div>
     }
     if (v === 'orderbook') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
+    if (v === 'broker') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><BrokerAccount /></div>
     if (v === 'failed-orders') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
     if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
     return (

@@ -29,6 +29,17 @@ def init_db():
                 crypto_port INTEGER
             )
         """)
+        # Self-signups from the website wait here until an admin approves them,
+        # so nothing that reads `users` (bots, restart-all, smoke test) sees them.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signups (
+                id INTEGER PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -80,6 +91,49 @@ def delete_sessions_for_user(username: str):
             "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
             (username,),
         )
+
+
+def username_taken(username: str) -> bool:
+    with _connect() as conn:
+        return any(conn.execute(f"SELECT 1 FROM {t} WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+                   for t in ("users", "signups"))
+
+
+def create_signup(username: str, password: str):
+    salt = secrets.token_hex(16)
+    with _connect() as conn:
+        conn.execute("INSERT INTO signups (username, salt, password_hash) VALUES (?, ?, ?)",
+                     (username, salt, _hash(password, salt)))
+
+
+def list_signups():
+    with _connect() as conn:
+        return conn.execute("SELECT username, created FROM signups ORDER BY id").fetchall()
+
+
+def signup_password_ok(username: str, password: str) -> bool:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM signups WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+    return row is not None and hmac.compare_digest(_hash(password, row["salt"]), row["password_hash"])
+
+
+def approve_signup(username: str, webview_port: int, ai_port: int) -> bool:
+    """Move a pending signup into users (same password hash). False if there's no such signup."""
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM signups WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "INSERT INTO users (username, salt, password_hash, webview_port, ai_port, is_admin) VALUES (?, ?, ?, ?, ?, 0)",
+            (row["username"], row["salt"], row["password_hash"], webview_port, ai_port),
+        )
+        conn.execute("DELETE FROM signups WHERE id = ?", (row["id"],))
+        return True
+
+
+def delete_signup(username: str) -> bool:
+    with _connect() as conn:
+        return conn.execute("DELETE FROM signups WHERE username = ?", (username,)).rowcount > 0
 
 
 def authenticate(username: str, password: str):

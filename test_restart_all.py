@@ -47,4 +47,33 @@ assert kills == [("chetan", "storesupportzone.py"), ("chetan", "store_exit.py"),
                  ("paras", "storesupportzone.py"), ("paras", "store_exit.py")], kills
 assert not started, "stop-all never starts anything"
 assert [r for r in out["results"] if r["alive"]] == [{"user": "paras", "bot": "store_exit", "alive": True}], out
-print("restart all + stop all: 7/7 checks passed")
+
+# crypto: only users with a crypto account; a user without their own crypto folder falls back
+# to the shared root (chetan's) and must NOT restart chetan's bots a second time
+with tempfile.TemporaryDirectory() as d:
+    root = Path(d)
+    (root / "chetan").mkdir(); (root / "paras").mkdir()
+    (root / "chetan" / "auto_trade_crypto.json").write_text("{}")
+    (root / "paras" / "auto_trade_crypto.json").write_text("{}")
+    users = [{"username": "chetan", "crypto_port": 4101}, {"username": "paras", "crypto_port": 4121},
+             {"username": "kamal", "crypto_port": None}, {"username": "testuser", "crypto_port": 4111}]
+    dirs = {"chetan": root / "chetan", "paras": root / "paras"}
+    calls, sleeps = [], []
+    proc = mock.Mock(poll=lambda: None)
+    with mock.patch.object(server.auth, "list_users", return_value=users), \
+         mock.patch.object(server, "_managed_account_dir", lambda base, u: dirs.get(u, root / "chetan")), \
+         mock.patch.object(server, "_kill_pid", lambda p, s: calls.append(("kill", p.name, s))), \
+         mock.patch.object(server, "_start_bot_process", lambda s, b, p: calls.append(("start", p.name, s)) or proc), \
+         mock.patch.object(server.time, "sleep", sleeps.append):
+        out = server.admin_restart_all_strategy_bots(market="crypto", admin={"is_admin": True})
+    assert [(r["user"], r["bot"]) for r in out["results"]] == [
+        ("chetan", "crypto_strategy"), ("chetan", "crypto_exit"), ("paras", "crypto_strategy"), ("paras", "crypto_exit")], out
+    assert [c for c in calls if c[0] == "start"] == [("start", "chetan", "stetergy.py"), ("start", "chetan", "stetergy_exit.py"),
+                                                    ("start", "paras", "stetergy.py"), ("start", "paras", "stetergy_exit.py")], calls
+    assert sleeps == [2, 2, 2, 2], sleeps
+    try:
+        server.admin_restart_all_strategy_bots(market="forex", admin={"is_admin": True})
+        raise AssertionError("bad market must fail")
+    except server.HTTPException as e:
+        assert e.status_code == 400
+print("restart all + stop all: 11/11 checks passed (india + crypto)")

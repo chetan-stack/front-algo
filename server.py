@@ -41,9 +41,34 @@ app.add_middleware(CORSMiddleware, allow_origins=["https://app.tradesmartai.in",
 def login(payload: dict = Body(...)):
     user = auth.authenticate(payload.get("username", ""), payload.get("password", ""))
     if user is None:
+        if auth.signup_password_ok(payload.get("username", ""), payload.get("password", "")):
+            raise HTTPException(403, "Your account is waiting for approval. Please try again later.")
         raise HTTPException(401, "invalid username or password")
     token = auth.create_session(user["id"])
     return {"success": True, "token": token, "username": user["username"], "is_admin": bool(user["is_admin"])}
+
+
+# Website "Create account". Only stores the login; no files, ports or bots
+# until an admin approves it (admin_approve_signup), so anonymous signups can't
+# use up this Mac's memory. The username becomes a folder name, hence the strict pattern.
+USERNAME_RE = re.compile(r"^[a-z0-9_]{3,20}$")
+MAX_PENDING_SIGNUPS = 20  # ponytail: global cap instead of per-IP limits; enough while an admin reviews by hand
+
+
+@app.post("/api/auth/signup")
+def signup(payload: dict = Body(...)):
+    username = str(payload.get("username") or "").strip().lower()
+    password = payload.get("password")
+    if not USERNAME_RE.match(username):
+        raise HTTPException(400, "Username: 3-20 characters, only a-z, 0-9 and _")
+    if not isinstance(password, str) or not 8 <= len(password) <= 128:
+        raise HTTPException(400, "Password must be 8-128 characters")
+    if auth.username_taken(username) or (SMARTAPI_DIR / "accounts" / username).exists():
+        raise HTTPException(409, "That username is taken")
+    if len(auth.list_signups()) >= MAX_PENDING_SIGNUPS:
+        raise HTTPException(429, "Too many accounts are waiting for approval. Please try again later.")
+    auth.create_signup(username, password)
+    return {"success": True, "pending": True}
 
 
 @app.post("/api/auth/logout")
@@ -667,6 +692,90 @@ def admin_create_user(payload: dict = Body(...), admin=Depends(auth.require_admi
     return result
 
 
+@app.get("/api/admin/signups")
+def admin_list_signups(admin=Depends(auth.require_admin)):
+    return {"success": True, "signups": [dict(r) for r in auth.list_signups()]}
+
+
+# Approve = what admin_create_user does for a demo account with no crypto and
+# no auto-strategy: account dir + paper config, then the dashboard and AI bots.
+# The user turns on strategy/crypto/live keys themselves afterwards.
+@app.post("/api/admin/signups/{username}/approve")
+def admin_approve_signup(username: str, admin=Depends(auth.require_admin)):
+    account_dir = SMARTAPI_DIR / "accounts" / username
+    if not USERNAME_RE.match(username) or account_dir.exists():
+        raise HTTPException(409, f"can't create an account directory for {username!r}")
+    webview_port, ai_port = _next_ports()
+    if not auth.approve_signup(username, webview_port, ai_port):
+        raise HTTPException(404, f"no pending signup {username!r}")
+    account_dir.mkdir(parents=True)
+    (account_dir / "document.py").write_text(_document_py_content(None))
+    (account_dir / "auto_trade.json").write_text(json.dumps(INDIA_DEFAULT_CONFIG, indent=4))
+    webview_proc = _start_bot_process("webviewdataapi.py", SMARTAPI_DIR, account_dir, webview_port)
+    time.sleep(1.5)
+    ai_proc = _start_bot_process("ai_order_service.py", SMARTAPI_DIR, account_dir, ai_port)
+    time.sleep(1.5)
+    return {"success": True, "username": username, "webview_alive": webview_proc.poll() is None, "ai_alive": ai_proc.poll() is None}
+
+
+@app.delete("/api/admin/signups/{username}")
+def admin_reject_signup(username: str, admin=Depends(auth.require_admin)):
+    if not auth.delete_signup(username):
+        raise HTTPException(404, f"no pending signup {username!r}")
+    return {"success": True}
+
+
+# "Broker Account" tab: users add their own AngelOne / Delta Exchange keys.
+# Same save + bot-restart path as the admin Manage screen, but the browser
+# never gets secrets back (only whether they're set), and the user's Telegram
+# settings are carried over untouched. Saving keys alone never trades real
+# money: withmoney in the trading settings stays off until the user turns it on.
+def _secret_fields(payload, names):
+    vals = {n: payload.get(n) for n in names}
+    if not all(isinstance(v, str) and v.strip() and len(v) <= 200 for v in vals.values()):
+        raise HTTPException(400, "Fill in every field")
+    return {n: v.strip() for n, v in vals.items()}
+
+
+def _mask(v):
+    return f"••••{v[-4:]}" if v else ""
+
+
+@app.get("/api/account/broker")
+def my_broker(user=Depends(get_effective_user)):
+    india = _read_document_py(_managed_account_dir(SMARTAPI_DIR, user["username"])) or {"demo_mode": True}
+    crypto = None
+    if user["crypto_port"] is not None:
+        crypto = _read_crypto_document_py(_managed_account_dir(CRYPTO_DIR, user["username"]))
+    return {
+        "success": True,
+        "india": {"live": not india["demo_mode"], "user_id": india.get("user_id", ""), "api_key": _mask(india.get("api_key", ""))},
+        "crypto": {"live": bool(crypto) and not crypto["demo_mode"], "provisioned": crypto is not None,
+                   "api_key": _mask((crypto or {}).get("api_key", ""))},
+    }
+
+
+@app.put("/api/account/broker/india")
+def my_broker_india(payload: dict = Body(...), user=Depends(get_effective_user)):
+    account_dir = _managed_account_dir(SMARTAPI_DIR, user["username"])
+    doc = _read_document_py(account_dir)
+    if doc is None:
+        raise HTTPException(404, "no India account for this user")
+    angelone = _secret_fields(payload, ("api_key", "user_id", "password", "totp")) if payload.get("live") else None
+    return admin_update_credentials(user["username"], {
+        "angelone": angelone,
+        "telegram": {"bot_token": doc["bot_token"], "chatids": doc["chatids"]},
+        # a running strategy only reads document.py at startup: restart it so it uses the new keys
+        "enable_strategy": _pid_alive(account_dir, "storesupportzone.py"),
+    }, admin=None)
+
+
+@app.put("/api/account/broker/crypto")
+def my_broker_crypto(payload: dict = Body(...), user=Depends(get_effective_user)):
+    deltaex = _secret_fields(payload, ("api_key", "api_secret")) if payload.get("live") else None
+    return admin_update_crypto_credentials(user["username"], {"deltaex": deltaex}, admin=None)
+
+
 # AngelOne credentials are stored in plaintext in document.py by necessity —
 # the broker login needs the real password — so unlike the app login (hashed,
 # unrecoverable), an admin who already has filesystem access to that file can
@@ -837,45 +946,64 @@ def admin_restart_strategy_bot(username: str, bot: str, admin=Depends(auth.requi
     return {"success": True, "alive": proc.poll() is None}
 
 
-# One click for every user's India auto-strategy + auto-exit (Admin → Users →
-# "Restart all strategy + exit bots"). Same steps as the per-bot Restart above:
-# kill the tracked PID first, so a restart never leaves a duplicate. A real
-# account logs in to AngelOne on start (login limit ~1/s), so its bots are
-# spaced 8s apart like start.sh; demo accounts have no login, 2s is enough.
-# Accounts without India auto-strategy (no auto_trade.json) are skipped.
-@app.post("/api/admin/bots/restart-all")
-def admin_restart_all_strategy_bots(admin=Depends(auth.require_admin)):
-    results = []
+# One click for every user's auto-strategy + auto-exit (Admin → Users → "Restart all
+# strategy + exit bots", ?market=india, the default; "... crypto ..." buttons send
+# ?market=crypto). Same steps as the per-bot Restart above: kill the tracked PID first,
+# so a restart never leaves a duplicate. A real India account logs in to AngelOne on
+# start (login limit ~1/s), so its bots are spaced 8s apart like start.sh; demo and
+# crypto accounts 2s. Accounts without that market's settings file are skipped.
+BULK_BOTS = {
+    "india": (SMARTAPI_DIR, "auto_trade.json", ("storesupportzone", "store_exit")),
+    "crypto": (CRYPTO_DIR, "auto_trade_crypto.json", ("crypto_strategy", "crypto_exit")),
+}
+
+
+def _bulk_accounts(market):
+    """(username, account_dir) for every account that trades `market`, each folder once.
+    Crypto: only users with a crypto account. _managed_account_dir falls back to the
+    shared root (chetan's) for a user without one, which would restart chetan's bots
+    once per such user."""
+    if market not in BULK_BOTS:
+        raise HTTPException(400, "market must be india or crypto")
+    base_dir, cfg_file, _ = BULK_BOTS[market]
+    seen = set()
     for u in auth.list_users():
-        account_dir = _managed_account_dir(SMARTAPI_DIR, u["username"])
-        if not (account_dir / "auto_trade.json").exists():
+        if market == "crypto" and u["crypto_port"] is None:
             continue
-        doc = _read_document_py(account_dir)
+        account_dir = _managed_account_dir(base_dir, u["username"])
+        if account_dir in seen or not (account_dir / cfg_file).exists():
+            continue
+        seen.add(account_dir)
+        yield u["username"], account_dir
+
+
+@app.post("/api/admin/bots/restart-all")
+def admin_restart_all_strategy_bots(market: str = "india", admin=Depends(auth.require_admin)):
+    results = []
+    for username, account_dir in _bulk_accounts(market):
+        doc = _read_document_py(account_dir) if market == "india" else None
         gap = 8 if doc and not doc["demo_mode"] else 2
-        for bot in ("storesupportzone", "store_exit"):
+        for bot in BULK_BOTS[market][2]:
             base_dir, script_name = STRATEGY_BOTS[bot]
             _kill_pid(account_dir, script_name)
             proc = _start_bot_process(script_name, base_dir, account_dir)
             time.sleep(gap)
-            results.append({"user": u["username"], "bot": bot, "alive": proc.poll() is None})
-    return {"success": True, "results": results}
+            results.append({"user": username, "bot": bot, "alive": proc.poll() is None})
+    return {"success": True, "market": market, "results": results}
 
 
-# Admin → Users → "Stop all strategy + exit bots": the per-bot Stop above, for
-# every user with India auto-strategy. Open positions stay in the database and
-# are picked up again by the next start, but nothing watches them meanwhile.
+# Admin → Users → "Stop all ... strategy + exit bots": the per-bot Stop above, for
+# every account of that market. Open positions stay in the database and are picked
+# up again by the next start, but nothing watches them meanwhile.
 @app.post("/api/admin/bots/stop-all")
-def admin_stop_all_strategy_bots(admin=Depends(auth.require_admin)):
+def admin_stop_all_strategy_bots(market: str = "india", admin=Depends(auth.require_admin)):
     results = []
-    for u in auth.list_users():
-        account_dir = _managed_account_dir(SMARTAPI_DIR, u["username"])
-        if not (account_dir / "auto_trade.json").exists():
-            continue
-        for bot in ("storesupportzone", "store_exit"):
+    for username, account_dir in _bulk_accounts(market):
+        for bot in BULK_BOTS[market][2]:
             base_dir, script_name = STRATEGY_BOTS[bot]
             _kill_pid(account_dir, script_name)
-            results.append({"user": u["username"], "bot": bot, "alive": _pid_alive(account_dir, script_name)})
-    return {"success": True, "results": results}
+            results.append({"user": username, "bot": bot, "alive": _pid_alive(account_dir, script_name)})
+    return {"success": True, "market": market, "results": results}
 
 
 @app.post("/api/admin/users/{username}/reset-password")
