@@ -577,7 +577,7 @@ def my_alerts(limit: int = 300, user=Depends(get_effective_user)):
     # without this guard, _managed_account_dir's "no accounts/<user> dir -> fall back to the
     # legacy root" rule would misattribute chetan's own BTC/ETH flags to every such user.
     if user["crypto_port"] is not None:
-        checks.append((CRYPTO_DIR, "auto_trade_crypto.json", (("BTC", "BTCUSD"), ("ETH", "ETHUSD"))))
+        checks.append((CRYPTO_DIR, "auto_trade_crypto.json", (("BTC", "BTCUSD"), ("ETH", "ETHUSD"), ("XAUT", "XAUTUSD"))))
     symbols = set()
     for base, cfg_name, flags in checks:
         try:
@@ -1146,7 +1146,7 @@ def fetch(symbol: str, resolution: str, n_bars: int):
 DELTA_OPTION_RE = re.compile(r"^[CP]-(BTC|ETH)-\d+-\d{6}$")
 # The crypto bot's futures ("Trade in: Futures") trade DeltaEx's own perpetuals;
 # the chart opens them as DELTA:BTCUSD / DELTA:ETHUSD (their own candles, not Binance's).
-DELTA_PERPETUALS = {"DELTA:BTCUSD": "BTCUSD", "DELTA:ETHUSD": "ETHUSD"}
+DELTA_PERPETUALS = {"DELTA:BTCUSD": "BTCUSD", "DELTA:ETHUSD": "ETHUSD", "DELTA:XAUTUSD": "XAUTUSD"}  # XAUT = gold
 
 
 def _delta_symbol(symbol):

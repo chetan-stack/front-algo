@@ -82,6 +82,22 @@ def fetch_binance(symbol, tf="1m"):
     return [(r[0] / 1000, float(r[1]), float(r[2]), float(r[3]), float(r[4])) for r in json.load(urllib.request.urlopen(url, timeout=10))]
 
 
+DELTA = {"1m": ("1m", 60, 200), "5m": ("5m", 300, 1000), "15m": ("15m", 900, 1000), "1h": ("1h", 3600, 1000), "1d": ("1d", 86400, 365)}
+
+
+def fetch_delta(symbol, tf="1m"):
+    """Delta Exchange India's own candles (gold XAUTUSD has no Binance pair). Oldest first, like fetch_binance."""
+    iv, sec, n = DELTA[tf]
+    end = int(time.time())
+    url = f"https://cdn.india.deltaex.org/v2/history/candles?resolution={iv}&symbol={symbol}&start={end - sec * n}&end={end}"
+    rows = json.load(urllib.request.urlopen(url, timeout=10)).get("result") or []
+    return sorted((r["time"], float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])) for r in rows)
+
+
+def fetch_crypto(symbol, tf="1m"):
+    return fetch_delta(symbol, tf) if symbol == "XAUTUSD" else fetch_binance(symbol, tf)
+
+
 def _reason(e):
     """type(e).__name__ alone hides WHY (DNS failure vs connection reset vs timeout vs HTTP 429) --
     exactly the detail needed to tell a real outage from a rate limit. urllib.error.URLError wraps
@@ -297,7 +313,7 @@ def check_accounts(mk, idx):
             continue
         auto, have = bool(cfg.get("auto_place_order")), running.get(str(d), set())
         enabled = [n for n in mk["symbols"] if cfg.get(mk["flag"](n))]
-        held = [o for o in cfg.get("storeorder") or [] if o.get("orderterm") == "hold"]
+        held = [o for o in cfg.get("storeorder") or [] if str(o.get("orderterm")).lower() == "hold"]
         pnl = sum(o.get("profit") or 0 for o in held)
         money = "REAL MONEY" if cfg.get("withmoney") else "paper"
         status = (f"auto {'ON' if auto else 'off'} ({money}) symbols={','.join(enabled) or '-'} | "
@@ -377,11 +393,12 @@ def check_orders(mk, idx, user, d, cfg, have, enabled, today):
     'brief' has no live numbers, so the accounts block only reprints when something real changes."""
     try:
         book = sqlite3.connect(d / "database.db")
+        side_sql = "lotsize != 0" if mk["key"] == "crypto" else "lotsize > 0"  # crypto: shorts have lotsize < 0
         pos = book.execute(f"SELECT symbol, ltp, lotsize, createddate FROM {mk['book']} "
-                           "WHERE lotsize > 0 AND (profit IS NULL OR profit = 0)").fetchall()
+                           f"WHERE {side_sql} AND (profit IS NULL OR profit = 0)").fetchall()
     except Exception:
         return []
-    held = {o["symbol"]: o for o in cfg.get("storeorder") or [] if o.get("orderterm") == "hold"}
+    held = {o["symbol"]: o for o in cfg.get("storeorder") or [] if str(o.get("orderterm")).lower() == "hold"}
     out, seen, sides = [], {}, {}
     now = datetime.now(IST).replace(tzinfo=None)
 
@@ -390,6 +407,9 @@ def check_orders(mk, idx, user, d, cfg, have, enabled, today):
 
     for sym, entry, qty, created in pos:
         n, call = mk["under"](sym), mk["is_call"](sym)
+        short = qty < 0  # crypto only (India's query has no shorts): a short is bearish where a long is bullish
+        if short:
+            call = not call
         a = idx.get(n)
         ol = (a or {}).get("ol") or {}
         seen[sym] = seen.get(sym, 0) + 1
@@ -410,9 +430,9 @@ def check_orders(mk, idx, user, d, cfg, have, enabled, today):
         pts = None
         if mk["key"] == "crypto":
             mark = crypto_mark(sym)
-            pts = None if mark is None else mark - float(entry)
+            pts = None if mark is None else (float(entry) - mark if short else mark - float(entry))
         elif o and "exit" in have:
-            pts = (o.get("profit") or 0) / qty
+            pts = (o.get("profit") or 0) / abs(qty)
         try:
             target = float((o or {}).get("targetpoint", cfg.get("target_points")))
             stop = float((o or {}).get("stoplosspoint", cfg.get("loss_points")))
@@ -435,7 +455,8 @@ def check_orders(mk, idx, user, d, cfg, have, enabled, today):
                 add(sym, "ORDER_TRAIL", "trail", f"{pts:+.1f} pts, {pts / target:.0%} of the way to its +{target:g} target: move the stop to entry (break-even) to lock it in{room}",
                     "in profit past half its target: move the stop to entry to lock it in")
         if against:
-            held_as = "long future" if sym in CRYPTO_FUTURES else ("call" if call else "put")
+            held_as = ("short future" if short else "long future") if sym in CRYPTO_FUTURES else \
+                ("sold " + ("put" if call else "call") if short else ("call" if call else "put"))
             add(sym, "ORDER_WRONG", "trend", f"{held_as} held against a {a['state'].lower().replace('_', ' ')} {n}")
         lv, dist = (ol.get("R"), ol.get("dR")) if call else (ol.get("S"), ol.get("dS"))
         if lv and dist is not None and dist < 0.6:
@@ -539,6 +560,20 @@ def suggest_points(a):
             "why": f"1-min ATR {a['atr']:.1f} index pts -> ~{0.5 * a['atr']:.1f} option pts/min; {word}"}
 
 
+def suggest_futures(a, atr5=None):
+    """Suggested futures target/stoploss in USD of the coin's price. A future moves 1:1 with the
+    coin. The crypto strategy trades 5-minute candles, so the stop is 2 x the 5-minute ATR
+    (1-min ATR x 3 gave BTC a $9.7 stop - hit within seconds, 2026-10-11 test). Without the
+    5-minute ATR (levels unavailable) it falls back to 1-min ATR x 3."""
+    raw = atr5 * 2 if atr5 else a["atr"] * 3
+    stop = round(raw) if raw >= 10 else round(raw, 1)  # gold's 1-min ATR is ~$1: keep the decimal
+    mult = 2 if a["state"] in ("TRENDING_UP", "TRENDING_DOWN") else 1 if a["state"] == "SIDEWAYS" else 1.5
+    word = {2: "trending, let it run", 1: "sideways, take quick", 1.5: "mixed"}[mult]
+    target = round(stop * mult) if stop >= 10 else round(stop * mult, 1)
+    basis = f"5-min ATR ${atr5:.2f} x 2" if atr5 else f"1-min ATR ${a['atr']:.2f} x 3"
+    return {"target": target, "loss": stop, "why": f"{basis}; futures move 1:1 with the coin; {word}"}
+
+
 def cycle(mk):
     now = datetime.now(IST)
     today, st = f"{now:%Y-%m-%d}", mk["st"]
@@ -568,6 +603,7 @@ def cycle(mk):
         lines.append(f"{name:9} {a['price']:>10,.2f} | 3m {a['move3']:+7.1f} | day {a['open_chg_pct']:+.2f}% | "
                      f"ATR {a['atr']:.1f} | ER {a['er']:.2f} | {' | '.join(tags)}")
         ol = {"label": None, "text": "", "S": None, "R": None, "dS": None, "dR": None}
+        atrs = {}
         try:
             levels, atrs = get_levels(mk, name)
             ol = a["ol"] = outlook(a, levels, atrs)
@@ -594,6 +630,8 @@ def cycle(mk):
         states[name] = {"state": a["state"], "price": round(a["price"], 2), "er": round(a["er"], 2),
                         "delayed": a["age_min"] > STALE_MIN, "label": ol["label"], "text": ol["text"],
                         "why": explain(a, ol), "suggest": suggest_points(a)}
+        if mk["key"] == "crypto":
+            states[name]["suggest_futures"] = suggest_futures(a, atrs.get("5m"))
     flagged = set()
     try:
         rows, findings = check_accounts(mk, idx)
@@ -644,7 +682,7 @@ def market(key, label, symbols, fetch, log, hours, dir_, cfg, flag, required, sc
                 st={"acct": None, "alerts": set(), "day": None, "last": {}, "open": False, "orders": {}})
 
 
-CRYPTO_FUTURES = {"BTCUSD": "BTC", "ETHUSD": "ETH"}  # DeltaEx perpetuals the crypto bot trades in futures mode
+CRYPTO_FUTURES = {"BTCUSD": "BTC", "ETHUSD": "ETH", "XAUTUSD": "XAUT"}  # DeltaEx perpetuals the crypto bot trades in futures mode
 
 MARKETS = {
     "india": market(
@@ -655,7 +693,7 @@ MARKETS = {
         lambda s: next((n for n in ("BANKNIFTY", "NIFTY", "SENSEX") if s.startswith(n)), None),
         lambda s: s.endswith("CE"), lambda s: s.endswith("PE"), "ordertoken"),
     "crypto": market(
-        "crypto", "Crypto", {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}, fetch_binance,
+        "crypto", "Crypto", {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "XAUT": "XAUTUSD"}, fetch_crypto,
         OUT / "crypto_analysis_log.txt", lambda now: True, SMARTAPI / "crypto", "auto_trade_crypto.json", lambda n: n + "USD",
         ("buy_or_sell", "lotsize", "target_points", "loss_points", "stop_loss"),
         ("stetergy.py", "stetergy_exit.py"),
@@ -711,6 +749,12 @@ def selftest():
     assert suggest_points({"atr": 12.0, "state": "SIDEWAYS"})["target"] == 18
     assert suggest_points({"atr": 1.0, "state": "MIXED"})["loss"] == 5, "floor of 5 pts"
     assert MARKETS["crypto"]["under"]("C-BTC-78200-310826") == "BTC" and MARKETS["crypto"]["is_call"]("C-BTC-78200-310826")
+    assert MARKETS["crypto"]["under"]("XAUTUSD") == "XAUT" and MARKETS["crypto"]["flag"]("XAUT") == "XAUTUSD"
+    assert suggest_futures({"atr": 1.0, "state": "TRENDING_UP"}) | {"why": ""} == {"target": 6.0, "loss": 3.0, "why": ""}, "gold keeps decimals"
+    assert (suggest_futures({"atr": 40.0, "state": "SIDEWAYS"})["loss"], suggest_futures({"atr": 40.0, "state": "SIDEWAYS"})["target"]) == (120, 120)
+    sf = suggest_futures({"atr": 3.2, "state": "TRENDING_UP"}, atr5=45.0)
+    assert (sf["loss"], sf["target"]) == (90, 180) and "5-min" in sf["why"], "5-min ATR x 2 when available"
+    assert suggest_futures({"atr": 0.1, "state": "MIXED"}, atr5=0.3)["loss"] == 0.6, "gold keeps decimals"
     assert MARKETS["india"]["under"]("BANKNIFTY29SEP2656100CE") == "BANKNIFTY" and MARKETS["india"]["is_put"]("NIFTY22SEP2623400PE")
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "log.txt"
@@ -735,6 +779,21 @@ def selftest():
     assert option_expiry("NIFTY22SEP2623300CE") == date(2026, 9, 22)
     assert option_expiry("SENSEX2691774400CE") == date(2026, 9, 17)
     assert option_expiry("P-BTC-80000-270826") == date(2026, 8, 27)
+    # crypto: a 'Hold' short future is checked (India's query/flow unchanged) and uses its own target
+    with tempfile.TemporaryDirectory() as dd:
+        con = sqlite3.connect(Path(dd) / "database.db")
+        con.execute("CREATE TABLE cryptoorderbook (symbol, ltp, lotsize, createddate, profit)")
+        con.execute("INSERT INTO cryptoorderbook VALUES ('BTCUSD', 84000, -2, '2026-10-11 09:00:00.000', 0)")
+        con.commit()
+        global crypto_mark
+        real_mark, crypto_mark = crypto_mark, lambda sym: 83900.0  # short: -100 price = +100 pts
+        try:
+            cfg = {"target_points": "500", "loss_points": "500",
+                   "storeorder": [{"symbol": "BTCUSD", "orderterm": "Hold", "targetpoint": 50, "stoplosspoint": 20}]}
+            got = check_orders(MARKETS["crypto"], {}, "u", Path(dd), cfg, {"entry", "exit"}, {"BTC"}, date(2026, 10, 11))
+        finally:
+            crypto_mark = real_mark
+        assert [(f["kind"], f["reason"]) for f in got] == [("ORDER_EXIT", "target")], got
     assert option_expiry("SENSEX26SEP74800CE") is None
     with tempfile.TemporaryDirectory() as d:
         book = sqlite3.connect(Path(d) / "database.db")

@@ -6,6 +6,34 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-11 — Crypto: chart RAM leak, 5-min futures suggestion, loss cooldown (uncommitted, crypto only)
+From the all-users 1-hour test (~/TradeSmart_AI_Crypto_AllUsers_Test_Report.txt):
+- `stetergy.py`: removed the per-scan `storecandlestickdata.createchart` (an mplfinance image per coin
+  per timeframe every scan, read by nothing; leaked ~215 MB/hour per bot, swap full). `sendimgdata`
+  (order image) now creates `static/` (missing in account dirs) and closes figures.
+- `stetergy.py`: `loss_cooldown_left` / `LOSS_COOLDOWN_MIN = 10`: no new futures entry on a coin for
+  10 min after its last trade closed at a loss (counted from entry time; the book has no exit time).
+- `analyst.py`: `suggest_futures(a, atr5)` = 2 x 5-minute ATR (was 1-min ATR x 3 -> BTC stop $9.7,
+  hit in seconds). India suggestions unchanged. Self-test ok; test_crypto_futures.py 34/34.
+Needs: `./start.sh` (analysts) + Admin -> restart all crypto bots.
+
+## 2026-10-11 — Crypto entry rules sized by ATR + Delta candles (uncommitted, crypto only; India untouched)
+From the 1-hour live test (~/TradeSmart_AI_Crypto_Bot_Test_Report.txt): 0 orders, and BTC/gold could never enter.
+`SmartApi/crypto/stetergy.py`:
+- Candles: `delta_candles()` (cdn.india.deltaex.org, real volume) first, TradingView fallback; no data -> that coin
+  is skipped for the scan (a None from tv.get_hist crashed the whole scan ~25x/hour).
+- Room to next level = `room_atr` x 5m ATR (default 2); level gap = 0.5 x ATR of each timeframe (ETH found 0
+  levels with 20). Old fixed COIN_TUNING values are only the fallback when ATR isn't available.
+- EMA touch = within `touch_atr` x ATR (default 0.5), was 1% of price (true on every scan).
+- Tight range threshold 1% -> 0.5% (`TIGHT_RANGE_PCT`). Candle colour from the last closed candle.
+- Trend filter `trend_filter`: strict (Trending) / relaxed (Trending or Mixed, default) / off.
+- `checkclosenear_price`: float levels (int() cut gold/ETH), no level above = unlimited room (was negative).
+  SELL-mode futures short/long check room in the trade's direction.
+Dashboard: Room (x ATR), EMA touch (x ATR), Trend filter in the crypto Trading panel; validated in
+crypto `webviewdataapi.py`. Tests: test_crypto_futures.py 33/33.
+Needs: `./start.sh` (dashboards) + Admin restart of the crypto strategy/exit bots (they had stopped at 11:18
+with no error, swap 4.4/5.1 GB).
+
 ## 2026-10-09 — Admin: restart / stop all CRYPTO strategy + exit bots (uncommitted)
 
 - server.py: `/api/admin/bots/restart-all` and `/stop-all` take `?market=india` (default, unchanged) or
@@ -30,6 +58,48 @@ pending, so a new session can pick up without the old conversation.
 - Verified: ran stop.sh with 6 orphan backends + 2 analysts running → nothing from the project left.
 - Same day: closed kamal #158 / testuser #314 (SENSEX 72400CE) at live 629.05 (bots were stopped).
   Backup ~/tradingview-backups/2026-10-09-pre-close-open/.
+
+## 2026-10-11 — Crypto strategy signals on 5-minute candles (uncommitted)
+
+- stetergy.stetergy(): signal candles = SIGNAL_INTERVAL (5m) instead of 1m (TradingView 1m not reliably
+  available; bots also log "error while signin" -> anonymous feed). timeframe_map (levels) = 5m, 15m (1m dropped);
+  closehigh/low = last closed 5m candle (was 1m resampled to 5m). Live dry run: BTC/ETH/XAUT 300 bars 5m apart.
+  Tests 30/30 + 11/11. Found: ETH gets 0 levels (level gap 20 too wide for ETH) -> calls never pass the room
+  check, puts always do (nearest support = 0). Pre-existing, not changed.
+- NEEDS: restart crypto strategy bots.
+
+## 2026-10-11 — Analyst: gold, futures suggestions, alerts on crypto running orders (uncommitted)
+
+- analyst.py crypto market: + XAUT (candles from Delta, fetch_delta/fetch_crypto; Binance has no XAUT).
+  market_state now has "suggest_futures" per coin (USD, 3x 1-min ATR, x2/x1/x1.5 by trend) besides "suggest"
+  (option pts, unchanged). Running-order checks fixed for crypto: storeorder 'Hold' matched (lower(); same
+  for india's 'hold'), crypto shorts checked (lotsize != 0, crypto only; P&L sign flipped, direction flipped).
+  India query/rules unchanged. --selftest ok (+gold, suggest_futures, short-future target alert).
+- server.py /api/alerts: XAUT in the crypto symbol list. TradingPanel: gold IndexStatus; per-coin rows show
+  "Suggested now ... Use" (options or futures by Trade in).
+- NEEDS: restart the CRYPTO analyst process (analyst.py --market crypto) + backend. India analyst can stay.
+
+## 2026-10-11 — Crypto: separate target/stoploss for BTC and ETH (uncommitted; India untouched)
+
+- New SmartApi/crypto/coin_points.py (crypto's index_points.py): auto_trade_crypto.json "coin_points"
+  {"BTC": {target, loss, futures_target, futures_loss}, "ETH": {...}}. Blank = the global points
+  (options: target_points/loss_points; futures: futures_*_points, then target_points/loss_points).
+- stetergy.exitstetergy (long + short) and enter_future's alert use coin_points.points_for. Read on every
+  exit check like before, so a change also applies to open positions (India stamps at entry instead).
+- crypto/webviewdataapi.py saves coin_points (cleaned). TradingPanel.jsx: crypto-only "Per-coin target /
+  stoploss" rows, showing the active Trade-in mode's fields. India files/blocks not touched (git: only crypto/).
+- Tests: coin_points 7/7, test_crypto_futures 27/27 (+1 per-coin test; harness now loads coin_points),
+  test_crypto_manual_entry 11/11, india index_points 5/5. vite build ok.
+- Gold: XAUTUSD perpetual added (futures only; gold options don't expire daily). crpto + FUTURES +
+  contract value 0.001; off by default (OFF_BY_DEFAULT) until ticked "Trade Gold" in the Crypto Trading panel;
+  skipped in options mode (OPTIONS_COINS). Room-to-move and level-merge rules per coin (COIN_TUNING):
+  BTC/ETH unchanged 300/20, gold 15/1 (BTC's scaled by price; tune after paper trades). extractsymbol is
+  now symbol[:-3] (same for BTC/ETH). Candles: TradingView CRYPTO:XAUTUSD (checked live). coin_points has XAUT.
+  Tests: test_crypto_futures 30/30 (+3 gold).
+- Gold chart: View chart on an XAUTUSD position opens DELTA:XAUTUSD (Delta's own candles; server.py
+  DELTA_PERPETUALS, crypto_live_feed SYMBOL_MAP, Chart.jsx perpetual map). Landing page + chatbot facts mention gold.
+  Not done: chart Long/Short buttons and manual entry for gold (enter_order is BTC/ETH only).
+- NEEDS: restart each crypto user's dashboard + crypto strategy + crypto exit bots.
 
 ## 2026-10-08 — Website "Create account" (pending approval) + users add their own broker keys (uncommitted)
 

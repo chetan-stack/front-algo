@@ -543,7 +543,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
   // ponytail: two OPEN orders on the same strike+right but different expiries would still collide; match expiry if that ever happens.
   // crypto futures: the order's symbol is BTCUSD / ETHUSD; its chart is BINANCE:BTCUSDT /
   // BINANCE:ETHUSDT (View chart) or DELTA:BTCUSD / DELTA:ETHUSD
-  const perpetual = market === 'crypto' ? { BTCUSDT: 'BTCUSD', ETHUSDT: 'ETHUSD', BTCUSD: 'BTCUSD', ETHUSD: 'ETHUSD' }[rawSymbol] : undefined
+  const perpetual = market === 'crypto' ? { BTCUSDT: 'BTCUSD', ETHUSDT: 'ETHUSD', BTCUSD: 'BTCUSD', ETHUSD: 'ETHUSD', XAUTUSD: 'XAUTUSD' }[rawSymbol] : undefined
   const strikeMatches = chartContract
     ? pendingOrders.filter((o) => {
         const oc = normalizeContract(parseContract(o.symbol))

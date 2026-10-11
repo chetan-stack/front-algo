@@ -146,6 +146,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       trade_SENSEX: config.SENSEX,
       trade_btcusd: config.BTCUSD,
       trade_ethusd: config.ETHUSD,
+      trade_xautusd: config.XAUTUSD,
     }
     if (market === 'crypto') {
       // The Buy/Sell and Trade-in dropdowns SHOW a default when nothing is saved,
@@ -285,6 +286,10 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         onViewOnChart({ symbol: chartSym, label: `${chartSym} — ${symbol} futures position` })
         return
       }
+      if (symbol === 'XAUTUSD') {  // gold: no Binance pair, so Delta's own perpetual candles
+        onViewOnChart({ symbol: 'DELTA:XAUTUSD', label: 'DELTA:XAUTUSD — gold futures position' })
+        return
+      }
       onViewOnChart({ symbol, label: symbol })
       return
     }
@@ -385,6 +390,11 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 <input type="checkbox" checked={!!config.ETHUSD} onChange={(e) => setConfig({ ...config, ETHUSD: e.target.checked })} />
                 Trade ETH <IndexStatus name="ETH" state={marketState} alerts={alerts} />
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                title="Gold (Tether Gold) perpetual on Delta Exchange. Trades only when Trade in = Futures.">
+                <input type="checkbox" checked={!!config.XAUTUSD} onChange={(e) => setConfig({ ...config, XAUTUSD: e.target.checked })} />
+                Trade Gold (XAUT, futures only) <IndexStatus name="XAUT" state={marketState} alerts={alerts} />
+              </label>
               {/* Same strategy and signals; only the instrument changes. Futures: a
                   bullish signal buys (long) the coin's perpetual (BTCUSD / ETHUSD), a
                   bearish one sells it (short); exits and P&L use the futures settings. */}
@@ -400,7 +410,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               </label>
               {(config.instrument || 'options') === 'futures' && (
                 <>
-                  <label title="Contracts per entry. BTCUSD = 0.001 BTC, ETHUSD = 0.01 ETH per contract.">
+                  <label title="Contracts per entry. BTCUSD = 0.001 BTC, ETHUSD = 0.01 ETH, XAUTUSD = 0.001 XAUT (gold) per contract.">
                     Futures contracts <input style={input} value={config.futures_qty ?? ''} placeholder="1"
                       onChange={(e) => setConfig({ ...config, futures_qty: e.target.value })} />
                   </label>
@@ -478,6 +488,68 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 )
               })}
             </div>
+          )}
+          {market === 'crypto' && (() => {
+            // Per-coin target/stoploss (crypto/coin_points.py). Blank = the global points above.
+            // Shows the fields of the active "Trade in" mode: option premium pts or futures USD.
+            const fut = (config.instrument || 'options') === 'futures'
+            const [tk, lk] = fut ? ['futures_target', 'futures_loss'] : ['target', 'loss']
+            const gt = fut ? (config.futures_target_points ?? config.target_points) : config.target_points
+            const gl = fut ? (config.futures_loss_points ?? config.loss_points) : config.loss_points
+            return (
+              <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 12, color: '#787b86' }}>
+                  Per-coin target / stoploss {fut ? '$ (futures)' : 'pts (options)'} (blank = global above)
+                </span>
+                {(fut ? ['BTC', 'ETH', 'XAUT'] : ['BTC', 'ETH']).map((coin) => {
+                  const cp = config.coin_points || {}
+                  const own = cp[coin] || {}
+                  const set = (k, v) => setConfig({ ...config, coin_points: { ...cp, [coin]: { ...own, [k]: v } } })
+                  // analyst.py: option premium pts (suggest) or futures USD (suggest_futures), like india's per-index rows
+                  const sug = marketState?.[coin]?.[fut ? 'suggest_futures' : 'suggest']
+                  return (
+                    <div key={coin} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 84 }}>{coin}</span>
+                      <label>Target <input style={{ ...input, width: 60 }} value={own[tk] ?? ''} placeholder={gt ?? ''}
+                        onChange={(e) => set(tk, e.target.value)} /></label>
+                      <label>Stoploss <input style={{ ...input, width: 60 }} value={own[lk] ?? ''} placeholder={gl ?? ''}
+                        onChange={(e) => set(lk, e.target.value)} /></label>
+                      {sug && (
+                        <span title={sug.why} style={{ fontSize: 11, color: '#f0b90b' }}>
+                          Suggested now: target {sug.target} / stoploss {sug.loss}{' '}
+                          <button style={{ ...input, width: 'auto', padding: '1px 6px', cursor: 'pointer' }}
+                            onClick={() => setConfig({ ...config, coin_points: { ...cp, [coin]: { ...own, [tk]: String(sug.target), [lk]: String(sug.loss) } } })}>
+                            Use
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+          {market === 'crypto' && (
+            // Entry rules (crypto/stetergy.py setting()): sized by each coin's 5-minute ATR. Blank = default.
+            <>
+              <label title="The nearest support/resistance must be at least this many ATRs away in the trade's direction. Lower = more trades. Default 2.">
+                Room to next level (× ATR) <input style={input} value={config.room_atr ?? ''} placeholder="2"
+                  onChange={(e) => setConfig({ ...config, room_atr: e.target.value })} />
+              </label>
+              <label title="Price counts as touching EMA 9/20 when within this many ATRs of it. Higher = more signals. Default 0.5.">
+                EMA touch (× ATR) <input style={input} value={config.touch_atr ?? ''} placeholder="0.5"
+                  onChange={(e) => setConfig({ ...config, touch_atr: e.target.value })} />
+              </label>
+              <label title="Strict = only in a trending market. Relaxed = trending or mixed (skips sideways). Off = no trend check.">
+                Trend filter
+                <select style={{ ...input, width: '100%' }} value={config.trend_filter || 'relaxed'}
+                  onChange={(e) => setConfig({ ...config, trend_filter: e.target.value })}>
+                  <option value="relaxed">Relaxed: trending or mixed</option>
+                  <option value="strict">Strict: trending only</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+            </>
           )}
           <label>Range min <input style={input} value={config.trade_range_min ?? ''} onChange={(e) => setConfig({ ...config, trade_range_min: e.target.value })} /></label>
           <label>Range max <input style={input} value={config.trade_range_max ?? ''} onChange={(e) => setConfig({ ...config, trade_range_max: e.target.value })} /></label>

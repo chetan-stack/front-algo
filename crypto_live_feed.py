@@ -30,6 +30,7 @@ SYMBOL_MAP = {
     # DELTA:BTCUSD / DELTA:ETHUSD — the perpetuals' own charts (crypto futures "View chart")
     "BTCUSD": "BTCUSD",
     "ETHUSD": "ETHUSD",
+    "XAUTUSD": "XAUTUSD",  # gold perpetual (DELTA:XAUTUSD), futures only
 }
 
 # Option contract symbols (e.g. "C-BTC-79800-290826") are already Delta's own
