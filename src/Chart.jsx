@@ -708,7 +708,7 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       })
       const d = await res.json()
       pushToast(d.status === 'success'
-        ? `${d.mode === 'live' ? '💰 live' : '📝 paper'} ${d.instrument} order placed: ${d.symbol} x${Math.abs(d.qty)}${d.qty < 0 ? ' short' : ''} @ ${d.price}`
+        ? `${d.mode === 'live' ? '💰 live' : '📝 paper'} ${d.instrument} order placed: ${d.symbol} x${Math.abs(d.qty)}${d.qty < 0 ? ' short' : ''} @ ${d.price}${d.margin != null ? ` · margin $${d.margin}${d.usd_inr ? ` (₹${Math.round(d.margin * d.usd_inr).toLocaleString('en-IN')})` : ''}` : ''}`
         : `Order failed: ${d.message}`)
       if (d.status === 'success') loadPendingOrders()
     } catch {

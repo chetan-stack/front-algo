@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { parseContract } from './contracts'
 import { apiFetch } from './api'
+import { chartTarget } from './chartTarget'
 import { fmtPnl } from './pnl'
 import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE, useMarketState, IndexStatus } from './orderAlerts'
 
@@ -65,6 +65,23 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     document.addEventListener('visibilitychange', onVisible)
     return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [brokerMode, prefix])
+  // "Margin needed per order (now)": the dashboard prices the next order the strategy
+  // would place (India: CE/PE premium x qty; crypto: futures notional / leverage, or
+  // the ATM call/put premium). Loaded once per page load (refresh the page for new
+  // prices) and after Save config; no timer, to keep the browser and bots light.
+  const [margin, setMargin] = useState(null)
+  async function loadMargin() {
+    try {
+      const d = await (await apiFetch(`${prefix}/margin-estimate`)).json()
+      setMargin(d.status === 'success' ? d : null)
+    } catch { setMargin(null) }
+  }
+  useEffect(() => { loadMargin() }, [prefix])
+  const inr = (v) => `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+  // crypto: USD and, when a USD→INR rate is known (setting or live market rate), rupees too
+  const money = (v) => v == null ? '—'
+    : market !== 'crypto' ? inr(v)
+    : `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })}${margin?.usd_inr ? ` (${inr(v * margin.usd_inr)})` : ''}`
   const [cryptoResults, setCryptoResults] = useState(null)
   const [cryptoSearchBusy, setCryptoSearchBusy] = useState(false)
 
@@ -163,6 +180,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     setSavingConfig(false)
     if (d.status === 'success') {
       setConfig(d.form_data)
+      loadMargin()  // lot size / OTM offset / leverage may have changed
       // crypto: the dashboard lists only the saved "Trade in" instrument — reload
       // so switching Options <-> Futures shows the right orders/totals at once
       if (market === 'crypto') load()
@@ -273,39 +291,13 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   // TradingView's search interleaves calls and puts regardless of the CE/PE in
   // the query text, so results must be filtered by parsed right, not just [0].
   async function viewOnChart(symbol) {
-    if (market === 'crypto') {
-      // DeltaEx option symbols (e.g. C-BTC-78200-310826) are already directly
-      // chartable — /api/ohlcv, /api/quote, and the live feed all recognize
-      // this exact format (server.py's DELTA_OPTION_RE), so no TradingView
-      // search/resolution step is needed like india's contracts below.
-      // Futures (BTCUSD / ETHUSD) open the Binance spot chart (BINANCE:BTCUSDT /
-      // BINANCE:ETHUSDT), where the chart draws the position's entry / target /
-      // stoploss. Levels are DeltaEx prices, so they can sit a few $ off Binance's.
-      if (symbol === 'BTCUSD' || symbol === 'ETHUSD') {
-        const chartSym = `BINANCE:${symbol}T`
-        onViewOnChart({ symbol: chartSym, label: `${chartSym} — ${symbol} futures position` })
-        return
-      }
-      if (symbol === 'XAUTUSD') {  // gold: no Binance pair, so Delta's own perpetual candles
-        onViewOnChart({ symbol: 'DELTA:XAUTUSD', label: 'DELTA:XAUTUSD — gold futures position' })
-        return
-      }
-      onViewOnChart({ symbol, label: symbol })
-      return
-    }
-    const c = parseContract(symbol)
-    if (!c) { setError(`Could not parse contract from ${symbol}`); return }
     setChartLoading(symbol)
-    const right = c.right === 'C' ? 'CE' : 'PE'
-    const res = await apiFetch(`/api/search?query=${encodeURIComponent(`${c.underlying} ${c.strike} ${right}`)}&type=options`)
-    const d = await res.json()
+    try {
+      onViewOnChart(await chartTarget(symbol, market))
+    } catch (e) {
+      setError(e.message)
+    }
     setChartLoading(null)
-    const match = d.success && d.results.find((r) => parseContract(r.symbol)?.right === c.right)
-    if (!match) { setError(`No TradingView listing found for ${symbol}`); return }
-    onViewOnChart({
-      symbol: `${match.exchange}:${match.symbol}`,
-      label: `${match.exchange}:${match.symbol} — ${match.description}`,
-    })
   }
 
   if (loading && !data) return <div style={{ padding: 24, color: '#d1d4dc' }}>Loading trading dashboard…</div>
@@ -422,6 +414,10 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                     Futures stoploss $ <input style={input} value={config.futures_loss_points ?? ''} placeholder={config.loss_points ?? ''}
                       onChange={(e) => setConfig({ ...config, futures_loss_points: e.target.value })} />
                   </label>
+                  <label title="The leverage set in your DeltaEx account, used only to show futures margin (notional / leverage). Not sent to DeltaEx. Blank = 200x, DeltaEx's default.">
+                    Leverage (x) <input style={input} value={config.futures_leverage ?? ''} placeholder="200"
+                      onChange={(e) => setConfig({ ...config, futures_leverage: e.target.value })} />
+                  </label>
                 </>
               )}
             </>
@@ -440,6 +436,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
             </label>
           ) : (
             <label>Stop loss <input style={input} value={config.stop_loss ?? ''} onChange={(e) => setConfig({ ...config, stop_loss: e.target.value })} /></label>
+          )}
+          {market === 'crypto' && (
+            <label title="Used only to show crypto margin in rupees. Blank = live market rate. Set DeltaEx's own conversion rate here if you want its numbers.">
+              USD→INR rate <input style={input} value={config.usd_inr ?? ''} placeholder={margin?.usd_inr ? Number(margin.usd_inr).toFixed(2) : 'live'}
+                onChange={(e) => setConfig({ ...config, usd_inr: e.target.value })} />
+            </label>
           )}
           {market === 'india' && (
             <label>OTM offset <input style={input} value={config.set_otm ?? ''} onChange={(e) => setConfig({ ...config, set_otm: e.target.value })} /></label>
@@ -700,6 +702,77 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         </div>
       )}
 
+      {margin && market !== 'crypto' && (
+        // India: NIFTY / BANKNIFTY / SENSEX always, ATM CE/PE at the current spot,
+        // qty = lots x lot size, margin = premium x qty (webviewdataapi.margin_estimate).
+        <div style={box}>
+          <b>Margin required per order</b>
+          <span style={{ fontSize: 11, color: '#787b86' }}> · prices at {margin.at} · refresh the page for new prices</span>
+          <div style={{ overflowX: 'auto', marginTop: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr>
+                <th style={th}>Index</th><th style={th}>Spot</th><th style={th}>ATM strike</th>
+                <th style={th}>CE premium</th><th style={th}>PE premium</th><th style={th}>Quantity</th>
+                <th style={th}>Margin min – max (ATM)</th>
+                {margin.set_otm ? <th style={th}>Margin at {margin.set_otm} pts OTM (what the strategy buys)</th> : null}
+              </tr></thead>
+              <tbody>
+                {Object.entries(margin.indices || {}).map(([name, m]) => (
+                  <tr key={name} style={{ opacity: m.enabled ? 1 : 0.55 }}>
+                    <td style={td}><b>{name}</b>{!m.enabled && <span style={{ fontSize: 11, color: '#787b86' }}> (not traded)</span>}</td>
+                    {m.error ? (
+                      <td style={{ ...td, color: '#787b86' }} colSpan={margin.set_otm ? 7 : 6}>price unavailable ({m.error})</td>
+                    ) : (
+                      <>
+                        <td style={td}>{m.spot.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        <td style={td} title={`${m.atm.ce.symbol} / ${m.atm.pe.symbol}`}>{m.atm.ce.strike}</td>
+                        <td style={td} title={`${m.atm.ce.premium} x ${m.qty} = ${money(m.atm.ce.margin)}`}>{m.atm.ce.premium} → {money(m.atm.ce.margin)}</td>
+                        <td style={td} title={`${m.atm.pe.premium} x ${m.qty} = ${money(m.atm.pe.margin)}`}>{m.atm.pe.premium} → {money(m.atm.pe.margin)}</td>
+                        <td style={td}>{m.lots} lot{m.lots === 1 ? '' : 's'} x {m.lot_size} = <b>{m.qty}</b></td>
+                        <td style={td}><b>{money(m.min)} – {money(m.max)}</b></td>
+                        {margin.set_otm ? (
+                          <td style={td} title={m.otm ? `CE ${m.otm.ce.symbol} ${m.otm.ce.premium} · PE ${m.otm.pe.symbol} ${m.otm.pe.premium}` : ''}>
+                            {m.otm ? `${money(m.otm.min)} – ${money(m.otm.max)}` : '—'}
+                          </td>
+                        ) : null}
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: '#787b86', marginTop: 4 }}>
+            {margin.buy_or_sell === 'SELL'
+              ? 'Buy/Sell is SELL: option selling (hedged) needs the broker margin, which is higher and not shown here. These are option-buying amounts.'
+              : 'Option buying: margin = premium x quantity (the full premium is paid). Quantity = your lot size setting x the index lot size.'}
+          </div>
+        </div>
+      )}
+
+      {margin && market === 'crypto' && (
+        <div style={box}>
+          <b>Margin required per order</b>
+          <span style={{ fontSize: 11, color: '#787b86' }}> · prices at {margin.at} · refresh the page for new prices</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 6, fontSize: 13 }}>
+            {Object.entries(margin.coins || {}).map(([name, m]) => (
+              <span key={name} title={m.legs ? m.legs.map((l) => `${l.symbol}: ${l.premium} x ${l.qty} = ${money(l.margin)}`).join('\n') : m.error || ''}>
+                <b>{name}</b>{' '}
+                {m.error ? <span style={{ color: '#787b86' }}>n/a ({m.error})</span>
+                  : m.min === m.max ? money(m.min) : `${money(m.min)} – ${money(m.max)}`}
+                {!m.error && m.qty ? <span style={{ fontSize: 11, color: '#787b86' }}> ({m.price} x {m.qty})</span> : null}
+              </span>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#787b86', marginTop: 4 }}>
+            {margin.usd_inr ? `₹ at 1 USD = ₹${Number(margin.usd_inr).toFixed(2)} (${margin.usd_inr_source}). ` : 'No USD→INR rate available, set one in "USD→INR rate". '}
+            {margin.instrument === 'futures'
+              ? `Futures: price x contracts x contract size / ${margin.leverage}x leverage${margin.leverage_is_default ? ' (DeltaEx default; set Leverage to match your account)' : ''}.`
+              : 'Options: premium of the ATM call / put x 5 contracts x contract size (the bot buys 5).'}
+          </div>
+        </div>
+      )}
+
       {!brokerMode && data.storeorder?.length > 0 && (
         <div style={box}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -901,7 +974,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               <thead><tr>
                 <th style={th}>ID</th><th style={th}>Script</th><th style={th}>Token</th><th style={th}>Lot size</th>
                 <th style={th}>Buy price</th><th style={th}>Exit price</th><th style={th}>Trailing SL</th>
-                <th style={th}>Target price</th><th style={th}>Max price</th><th style={th}>Profit</th><th style={th}>Created</th>
+                <th style={th}>Target price</th><th style={th}>Max price</th><th style={th}>Margin</th><th style={th}>Profit</th><th style={th}>Created</th>
               </tr></thead>
               <tbody>
                 {data.fetchdata.map((t) => (
@@ -915,6 +988,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                     <td style={td}>{t.trailing_stoploss_price}</td>
                     <td style={td}>{t.target_price}</td>
                     <td style={td}>{t.max_price_achieved}</td>
+                    <td style={td} title={market === 'crypto' ? 'Open positions only (a closed row keeps no quantity)' : 'Premium x quantity'}>{money(t.margin)}</td>
                     <td style={{ ...td, color: profitColor(t.profit) }}>{typeof t.profit === 'number' ? (market === 'crypto' ? fmtPnl(t.profit, market, t.script) : t.profit.toFixed(2)) : t.profit}</td>
                     <td style={td}>{t.createddate}</td>
                   </tr>

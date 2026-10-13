@@ -6,6 +6,67 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-13 — "✕ Close layout" button (frontend only, uncommitted)
+
+- App.jsx: while a saved layout (★ preset) is open, a red "✕ Close layout" tab button appears. It restores the
+  screens from before the layout was opened (`beforePreset`: count, panes, chart states; switching from one
+  layout to another keeps the original "before"), or one chart screen if there's none. vite build ok.
+
+## 2026-10-13 — Alerts: "View chart" / "Exit" on order alerts (frontend only, uncommitted)
+
+- Alerts.jsx: every ORDER_* alert (wrong order / exit needed / trail target) gets "View chart" and "Exit".
+  View chart → App.openOrderChart: an admin opening ANOTHER user's order is switched to that account
+  (the existing "act as", banner shows it), then the Charts view opens on the position (pending-order box:
+  Exit, target/SL, P&L); opening your own order stops acting as anyone. Exit → confirm, then
+  /api/{trading|crypto/trading}/exit-order for the alert's user only (apiFetch `asUser`, no app-wide
+  switch); result shown on the row (keyed by the alert, the list reloads every 30s). A closed position
+  answers "no open position". Users (non-admin) see buttons on their own order alerts.
+- api.js: `options.asUser` per-request override ('' = myself). Node check 4/4.
+- chartTarget.js: order symbol → chart (moved out of TradingPanel.viewOnChart, which now uses it).
+- App.jsx: own username from /api/auth/me (to know when acting is needed).
+- Current P&L on each of TODAY's order alerts: Alerts loads each owner's pending-orders (per market, admin via
+  asUser) on its 30s refresh; the order record's `profit` is the live P&L the exit bot writes every few
+  seconds while open (final once closed) → "P&L now ₹…" / "Closed, P&L …", green/red. If the symbol's record
+  was entered AFTER the alert (a newer position), the row says "closed" instead of borrowing its P&L.
+- vite build ok. No backend change: exit-order already honours as_user (admin only, 403 otherwise).
+
+## 2026-10-13 — crypto margin also in INR (uncommitted)
+
+- crypto/webviewdataapi.py `usd_inr(cfg)`: panel setting "USD→INR rate" (`usd_inr`, 50–200, display only)
+  wins; else live market rate from open.er-api.com (free, no key), cached 1h; None if unavailable.
+  margin_estimate returns usd_inr + usd_inr_source; enter_order returns usd_inr.
+- TradingPanel.jsx: crypto margin shows "$X (₹Y)" in the margin box and trade-history Margin column, with
+  the rate and its source noted; new "USD→INR rate" input (placeholder shows the live rate).
+  Chart.jsx: Long/Short message shows ₹ too.
+- Tests: crypto/test_margin_crypto.py 21/21. NEEDS: dashboards restart (./stop.sh && ./start.sh).
+- Margin box: no 60s timer any more (user request, RAM): loads once per page load and after Save config.
+
+## 2026-10-13 — margin needed per order + margin invested per trade (India + crypto, uncommitted)
+
+- India webviewdataapi: `/api/margin_estimate` (30s cache): per enabled index, the CE (spot+set_otm) and PE
+  (spot−set_otm) the strategy would buy next (storetoken.placeorderdetails, nearest expiry), premium from the
+  live feed (REST fallback) × lots × lot size → min/max. SELL mode noted as broker margin (not estimated).
+  Trade history rows get `margin` = buy × qty (closed rows: qty from P&L / (exit − buy); shorts: none).
+- Crypto webviewdataapi: `/api/margin_estimate`: futures = mark × futures_qty × contract size / leverage;
+  options = ATM call/put premium × 5 × contract size → min/max. New display-only setting `futures_leverage`
+  (1–200, blank = 200 DeltaEx default). Trade rows: `margin` for open positions (closed rows keep no qty).
+  Chart Long/Short reply includes the margin.
+- server.py: `/api/trading/margin-estimate`, `/api/crypto/trading/margin-estimate` (proxies).
+- TradingPanel.jsx: "Margin needed per order (now)" box (both markets, refresh 60s and after Save config,
+  hover = contracts); crypto futures "Leverage (x)" input; "Margin" column in trade history.
+- Follow-up same day: India "Margin required per order" is now a table with ALL of NIFTY / BANKNIFTY /
+  SENSEX (untraded ones greyed): spot, ATM strike (the strategy's nearest-100 pick), CE / PE premium →
+  margin, quantity "lots x lot size = qty", min–max; plus a column at the OTM offset when set_otm ≠ 0.
+  Both margin routes cache 5s, so a screen refresh shows fresh prices.
+- Tests: test_margin_india.py 15/15, crypto/test_margin_crypto.py 14/14 (new); all other suites pass.
+- FIXED after the 12:12 restart (box didn't show): (1) India margin_estimate called load_data() but the India
+  load_data needs one arg → 500 on every call; now load_data(None), and the test stub takes exactly one arg.
+  (2) chetan's crypto dashboard CRASHED at 12:13: importing stetergy inside a request imports
+  storecandlestickdata, which runs mpf.plot at import time; macOS kills the process when matplotlib's GUI
+  backend opens a window off the main thread. Crypto webviewdataapi now sets matplotlib.use("Agg") first.
+  Reproduced (default backend crashes, Agg survives). This also affected the chart Long/Short buttons.
+- NEEDS: backend + all dashboards restart (./stop.sh && ./start.sh).
+
 ## 2026-10-11 — Crypto: chart RAM leak, 5-min futures suggestion, loss cooldown (uncommitted, crypto only)
 From the all-users 1-hour test (~/TradeSmart_AI_Crypto_AllUsers_Test_Report.txt):
 - `stetergy.py`: removed the per-scan `storecandlestickdata.createchart` (an mplfinance image per coin

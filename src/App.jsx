@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from './api'
+import { chartTarget } from './chartTarget'
 import Alerts from './Alerts'
 import Chart from './Chart'
 import TradingPanel from './TradingPanel'
@@ -36,6 +37,11 @@ export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('isAdmin') === 'true')
   const [actingAs, setActingAs] = useState(() => localStorage.getItem('actingAs') || '')
+  const [me, setMe] = useState('')  // own username, so the Alerts tab knows when "act as" is needed
+  useEffect(() => {
+    if (!token) return
+    apiFetch('/api/auth/me', { asUser: '' }).then((r) => r.json()).then((d) => setMe(d.username || '')).catch(() => {})
+  }, [token])
   const [count, setCount] = useState(1)
   // One view per screen: any tab can go in any screen (charts beside the
   // order book, notifications, etc). The top tab bar drives screen 1.
@@ -67,11 +73,25 @@ export default function App() {
     setPresets((all) => [...all.filter((pr) => pr.name !== name), { name, count, panes: panes.slice(0, count), charts: paneCharts.slice(0, count) }])
   }
 
+  // The screens as they were before a saved layout was opened, for "Close layout".
+  const [beforePreset, setBeforePreset] = useState(null)
+
   function openPreset(pr) {
+    if (!activePreset) setBeforePreset({ count, panes, charts: paneCharts })  // switching layouts keeps the first "before"
     setCount(pr.count)
     setPanes((p) => [...pr.panes, ...p.slice(pr.panes.length)])
     if (pr.charts) setPaneCharts((p) => [...pr.charts, ...p.slice(pr.charts.length)])
     setLayoutVersion((n) => n + 1)
+  }
+
+  // Back to the screens from before the layout was opened, or one chart screen.
+  function closePreset() {
+    const back = beforePreset || { count: 1, panes: ['charts', ...panes.slice(1)], charts: paneCharts }
+    setCount(back.count)
+    setPanes(back.panes)
+    setPaneCharts(back.charts)
+    setLayoutVersion((n) => n + 1)
+    setBeforePreset(null)
   }
 
   function deletePreset(name) {
@@ -146,11 +166,25 @@ export default function App() {
     setActingAs('')
   }
 
+  // Alerts tab -> the position's chart (its pending-order box has Exit, target/stoploss
+  // and live P&L). An admin opening another user's order switches to that account first
+  // (the same "act as" as Admin → Act as), so the chart's Exit works on THEIR order;
+  // opening their own order stops acting as anyone.
+  async function openOrderChart({ user, market, symbol }) {
+    if (isAdmin && user) {
+      if (user === me) stopActingAs()
+      else { localStorage.setItem('actingAs', user); setActingAs(user) }
+    }
+    const target = await chartTarget(symbol, market)  // throws a readable error for the caller
+    setJump(target)
+    setView(market === 'crypto' ? 'crypto-charts' : 'charts')
+  }
+
   function renderView(v, i) {
     const market = v.startsWith('crypto') ? 'crypto' : 'india'
     if (v === 'admin') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><Admin onActAsUser={actAsUser} /></div>
     if (v === 'logs') return <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
-    if (v === 'alerts') return <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} /></div>
+    if (v === 'alerts') return <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} me={me} onViewOrder={openOrderChart} /></div>
     if ((v === 'analysis' || v === 'crypto-analysis') && isAdmin) return <div style={{ flex: 1, minHeight: 0 }}><Analysis key={v} market={v === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
     if (v === 'all-notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
     if (v === 'notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
@@ -214,6 +248,11 @@ export default function App() {
             </span>
           </button>
         ))}
+        {activePreset && (
+          <button onClick={closePreset} className="tab-btn" title={`Close "${activePreset.name}" and go back to the screens you had before`} style={{ color: '#ef5350' }}>
+            ✕ Close layout
+          </button>
+        )}
         <button onClick={savePreset} className="tab-btn" title="Save the current screens as a layout">
           + Save layout
         </button>

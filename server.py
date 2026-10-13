@@ -1593,6 +1593,18 @@ def crypto_trading_enter_order(payload: dict = Body(...), user=Depends(get_effec
     return resp.json()
 
 
+# Trading panel "Margin needed per order (now)": each dashboard prices the next order
+# the strategy would place (webviewdataapi.py / crypto/webviewdataapi.py margin_estimate).
+@app.get("/api/trading/margin-estimate")
+def trading_margin_estimate(user=Depends(get_effective_user)):
+    return requests.get(f"{trading_api(user)}/api/margin_estimate", timeout=30).json()
+
+
+@app.get("/api/crypto/trading/margin-estimate")
+def crypto_trading_margin_estimate(user=Depends(get_effective_user)):
+    return requests.get(f"{crypto_api(user)}/api/margin_estimate", timeout=30).json()
+
+
 @app.post("/api/crypto/trading/exit-order")
 def crypto_trading_exit_order(payload: dict = Body(...), user=Depends(get_effective_user)):
     resp = requests.post(f"{crypto_api(user)}/api/exit_order", json=payload, timeout=20)
