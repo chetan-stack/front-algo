@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { apiFetch } from './api'
+import { configPayload } from './tradingConfig'
 import { chartTarget } from './chartTarget'
 import { fmtPnl } from './pnl'
 import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE, useMarketState, IndexStatus } from './orderAlerts'
@@ -152,27 +153,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
   async function saveConfig() {
     setSavingConfig(true)
-    // update_dashboard_config reads these back under different keys than
-    // /api/dashboard returns them under (NIFTY -> trade_nifty, etc.) —
-    // without this, they silently read as undefined and get saved as false.
-    const payload = {
-      ...config,
-      selectclient: data.selectclient?.[0],
-      trade_nifty: config.NIFTY,
-      trade_banknifty: config.BANKNIFTY,
-      trade_SENSEX: config.SENSEX,
-      trade_btcusd: config.BTCUSD,
-      trade_ethusd: config.ETHUSD,
-      trade_xautusd: config.XAUTUSD,
-    }
-    if (market === 'crypto') {
-      // The Buy/Sell and Trade-in dropdowns SHOW a default when nothing is saved,
-      // but the unset value was sent as-is — buy_or_sell was saved as null and the
-      // crypto strategy (which checks == 'BUY' / 'SELL') never entered at all.
-      payload.instrument = config.instrument || 'options'
-      payload.buy_or_sell = config.buy_or_sell || 'BUY'
-      if (payload.instrument === 'options' && payload.buy_or_sell === 'BOTH') payload.buy_or_sell = 'BUY'  // BOTH is futures-only
-    }
+    const payload = configPayload(config, data.selectclient?.[0], market)
     const res = await apiFetch(`${prefix}/config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })

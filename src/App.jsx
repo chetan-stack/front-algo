@@ -9,6 +9,7 @@ import Admin from './Admin'
 import AiChatTab from './AiChatTab'
 import AdminLogs from './AdminLogs'
 import Analysis from './Analysis'
+import MarketAnalysis from './MarketAnalysis'
 import Notifications from './Notifications'
 import OrderBook from './OrderBook'
 import FailedOrders from './FailedOrders'
@@ -29,6 +30,7 @@ const TABS = [
   { id: 'failed-orders', label: 'Failed Orders' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'market-analysis', label: 'Market Analysis' },
   { id: 'ai-chat', label: 'AI Chat' },
   { id: 'broker', label: 'Broker Account' },
 ]
@@ -186,6 +188,7 @@ export default function App() {
     if (v === 'logs') return <div style={{ flex: 1, minHeight: 0 }}><AdminLogs /></div>
     if (v === 'alerts') return <div style={{ flex: 1, minHeight: 0 }}><Alerts onSeen={alertsSeen} scope={isAdmin ? 'all' : 'self'} me={me} onViewOrder={openOrderChart} /></div>
     if ((v === 'analysis' || v === 'crypto-analysis') && isAdmin) return <div style={{ flex: 1, minHeight: 0 }}><Analysis key={v} market={v === 'crypto-analysis' ? 'crypto' : 'india'} /></div>
+    if (v === 'market-analysis') return <div style={{ flex: 1, minHeight: 0 }}><MarketAnalysis isAdmin={isAdmin} onViewOnChart={viewOnChart} /></div>
     if (v === 'all-notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="all" /></div>
     if (v === 'notifications') return <div style={{ flex: 1, minHeight: 0 }}><Notifications scope="self" /></div>
     if (v === 'ai-chat') {

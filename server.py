@@ -569,6 +569,26 @@ def market_state(market: str = "india", user=Depends(auth.get_current_user)):
     return {"success": True, **data}
 
 
+# Market Analysis tab (market_scan.py): market data + Claude's plan, same for every user.
+@app.get("/api/market-scan")
+def market_scan(user=Depends(auth.get_current_user)):
+    try:
+        data = json.loads((ANALYSIS_DIR / "market_scan.json").read_text())
+    except (OSError, ValueError):
+        data = None
+    running = bool(subprocess.run(["pgrep", "-f", r"[Pp]ython[0-9.]* market_scan\.py$"], capture_output=True).stdout.strip())
+    return {"success": True, "running": running, "asked": (ANALYSIS_DIR / "market_scan.ask").exists(), "data": data}
+
+
+# "Ask Claude now": the scanner wakes within 5s and runs Claude this cycle. Admin-only,
+# so users can't burn the Claude plan's usage by clicking.
+@app.post("/api/admin/market-scan/ask")
+def market_scan_ask(admin=Depends(auth.require_admin)):
+    ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+    (ANALYSIS_DIR / "market_scan.ask").touch()
+    return {"success": True}
+
+
 @app.get("/api/alerts")
 def my_alerts(limit: int = 300, user=Depends(get_effective_user)):
     username = user["username"]

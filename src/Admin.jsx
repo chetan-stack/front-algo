@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { apiFetch } from './api'
+import AdminUserTrading from './AdminUserTrading'
 
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 16 }
 const input = { background: '#131722', color: '#d1d4dc', border: '1px solid #2a2e39', borderRadius: 4, padding: '6px 10px', width: '100%' }
@@ -36,6 +37,7 @@ export default function Admin({ onActAsUser }) {
   const [cryptoBusy, setCryptoBusy] = useState(false)
   const [cryptoMessage, setCryptoMessage] = useState('')
   const [botBusy, setBotBusy] = useState(null)
+  const [tradingKey, setTradingKey] = useState(0)  // bump = reload every user card on the right
 
   async function loadUsers() {
     const res = await apiFetch('/api/admin/users')
@@ -244,7 +246,8 @@ export default function Admin({ onActAsUser }) {
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ padding: 'clamp(10px, 2vw, 24px)', display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+    <div style={{ flex: '0 1 480px', minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={box}>
         <h3 style={{ color: '#d1d4dc', marginTop: 0 }}>Add user</h3>
         <form onSubmit={createUser}>
@@ -395,6 +398,7 @@ export default function Admin({ onActAsUser }) {
           </button>
           {restartAll.msg && <span style={{ fontSize: 12, color: '#d1d4dc' }}>{restartAll.msg}</span>}
         </div>
+        <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ color: '#787b86', textAlign: 'left' }}>
@@ -608,7 +612,20 @@ export default function Admin({ onActAsUser }) {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
+    </div>
+    {/* Right side: every user's auto-strategy switches + today's P&L / orders, no "Act as" needed */}
+    <div style={{ ...box, flex: '1 1 340px', minWidth: 0, padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <h3 style={{ color: '#d1d4dc', margin: 0 }}>Auto strategy &amp; today's results</h3>
+        <span style={{ color: '#787b86', fontSize: 12 }}>switches save instantly to that user</span>
+        <button onClick={() => setTradingKey((k) => k + 1)} style={{ ...smallBtn, marginLeft: 'auto' }}>⟳ Refresh all</button>
+      </div>
+      <div key={tradingKey} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: 10 }}>
+        {users.map((u) => <AdminUserTrading key={u.username} user={u} onActAsUser={onActAsUser} />)}
+      </div>
+    </div>
     </div>
   )
 }

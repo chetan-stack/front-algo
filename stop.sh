@@ -7,7 +7,7 @@ if [ -f .runpids ]; then
   rm .runpids
 fi
 # every backend and analyst of this project, including orphans .runpids forgot
-stop_pids $(project_pids server.py) $(project_pids analyst.py)
+stop_pids $(project_pids server.py) $(project_pids analyst.py) $(project_pids market_scan.py)
 
 # Per-user trading dashboards started by start.sh aren't tracked in .runpids
 # (they're per-port, not one fixed set) -- kill by port instead, same as
@@ -22,9 +22,9 @@ while IFS='|' read -r webview_port ai_port crypto_port; do
 done
 echo "stopped dashboards."
 
-left="$(project_pids server.py) $(project_pids analyst.py)"
+left="$(project_pids server.py) $(project_pids analyst.py) $(project_pids market_scan.py)"
 if [ -n "${left// /}" ]; then
   echo "STILL RUNNING (pids): $left"
 else
-  echo "stopped: backend, analysts, frontend, tunnel, dashboards. (Strategy/exit bots: Admin panel.)"
+  echo "stopped: backend, analysts, market scan, frontend, tunnel, dashboards. (Strategy/exit bots: Admin panel.)"
 fi

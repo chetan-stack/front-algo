@@ -6,6 +6,45 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-14 — Admin tab: per-user auto-strategy checkboxes + today's P&L / orders (frontend only, uncommitted)
+- src/AdminUserTrading.jsx (new): right-side "Auto strategy & today's results" box in Admin (one block per user, with Act as), India (+ Crypto if crypto_port)
+  line with Auto / NIFTY / BANKNIFTY / SENSEX (crypto: Auto / BTC / ETH / XAUT) checkboxes that
+  save immediately to THAT user's dashboard, plus Today P&L, orders, stoploss hits, open positions
+  (parsed from the dashboard's `allprofit` string; open = storeorder orderterm "hold").
+  Uses the existing /api/trading(/crypto)/dashboard + /config routes with per-request `asUser`,
+  no backend change. Loads once per Admin open, ⟳ per line, no timer.
+- src/tradingConfig.js (new): configPayload() moved out of TradingPanel.saveConfig (the config
+  route replaces every field, so the full form + trade_* key mapping is always sent); both use it.
+- Note: India's GET /api/dashboard saves its form_data (old behaviour, same as opening Trading).
+
+## 2026-10-14 — Market Analysis tab (all users) + market_scan.py with Claude plan (uncommitted)
+- **market_scan.py** (new, read-only, never trades, never calls AngelOne): every 5 min writes
+  `~/tradingview-analysis/market_scan.json`: NIFTY/BANKNIFTY/SENSEX (trend, day H/L, S/R via
+  analyst.py, rule-based prebuilt strategy, suggest_points), India VIX, forex + global cues and
+  50 F&O stock movers (Yahoo spark batch, 10/call), crypto BTC/ETH/XAUT (24h from 1h candles)
+  + Binance top movers (stablecoins dropped), news from ET/Moneycontrol/CoinDesk RSS with
+  HIGH/MEDIUM/LOW keyword impact. Every 15 min in India hours (30 otherwise), or on admin
+  "Ask Claude now" (touches `market_scan.ask`), runs `claude -p --model haiku --tools ""
+  --json-schema` on the snapshot → `ai` (mood, risk, when_to_trade, per-market strategy with
+  entry/SL/target, stocks, news impact, avoid, data_checks). Failed Claude run keeps the last
+  good plan + error. `MARKET_SCAN_MODEL` env overrides the model. `--selftest`, `--once`.
+- Measured: scanner ~40 MB, cycle ~18 s; Claude call ~80 s, ~250 MB only while it runs.
+- server.py: `GET /api/market-scan` (any user), `POST /api/admin/market-scan/ask` (admin).
+- src/MarketAnalysis.jsx + "Market Analysis" tab in App.jsx; loads once + manual Refresh, no timer.
+- start.sh starts it (one copy), stop.sh stops it (project_pids market_scan.py).
+- Not done: strategy backtest win-rates; admin start/stop button for the scanner.
+- Same day, change: NO coded strategy rules any more (strategy(), suggest_points and the movers'
+  momentum/breakdown tags removed). Claude builds a `playbook` (3-6 named strategies with
+  condition / entry / stoploss / target / avoid rules for today) and picks one per market; the
+  snapshot carries only data (+ atr_1m, efficiency). Tab shows "Prebuilt strategies by Claude"
+  and each index card shows Claude's pick.
+- Same day: AI plan for EVERY top gainer/loser (`stocks`: side BUY/SELL/AVOID, strategy, numeric
+  entry/stoploss/target). market_scan.check_levels turns a wrong-way plan (BUY with SL >= entry,
+  etc.) into AVOID before saving. Movers table shows the plan + "View strategy" button →
+  App jump carries `trade`; Chart.jsx jump effect adds an `ai-trade` drawing (AI Entry/Target/
+  Stoploss lines, replaces the older AI plan on that symbol; removable from the drawings list).
+  UI labels say "AI", never "Claude".
+
 ## 2026-10-13 — "✕ Close layout" button (frontend only, uncommitted)
 
 - App.jsx: while a saved layout (★ preset) is open, a red "✕ Close layout" tab button appears. It restores the

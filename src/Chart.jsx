@@ -245,6 +245,10 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
     if (!jump) return
     setSymbol(jump.symbol)
     setLabel(jump.label)
+    // Market Analysis "View strategy": draw the AI entry / target / stoploss lines,
+    // replacing any older AI plan on this symbol so they don't pile up
+    if (jump.trade) setDrawings((d) => [...d.filter((x) => !(x.symbol === jump.symbol && x.type === 'ai-trade')),
+      { id: Date.now(), symbol: jump.symbol, type: 'ai-trade', ...jump.trade }])
     onJumpConsumed?.()
   }, [jump])
 

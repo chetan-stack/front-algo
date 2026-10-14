@@ -118,4 +118,13 @@ for market in india crypto; do
   fi
 done
 
+# Market Analysis tab (market_scan.py): every market every 5 min + Claude's plan, read-only.
+# Venv python (needs certifi via analyst.py); claude CLI must be on PATH for the AI part.
+if ! pgrep -f "[Pp]ython[0-9.]* market_scan\.py\$" >/dev/null; then
+  nohup .venv/bin/python market_scan.py >~/tradingview-analysis/market_scan.out 2>&1 &
+  echo "market scan started"
+else
+  echo "market scan already running"
+fi
+
 echo "stop with: ./stop.sh"
