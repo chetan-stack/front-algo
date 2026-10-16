@@ -198,7 +198,7 @@ export default function App() {
     if (v === 'orderbook') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><OrderBook /></div>
     if (v === 'broker') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><BrokerAccount /></div>
     if (v === 'failed-orders') return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><FailedOrders /></div>
-    if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel market={market} onViewOnChart={viewOnChart} /></div>
+    if (v === 'trading' || v === 'crypto-trading') return <div style={{ flex: 1, minHeight: 0 }}><TradingPanel key={market} market={market} onViewOnChart={viewOnChart} /></div>
     return (
       <div style={{ flex: 1, minHeight: 0 }}><Chart
         key={`${market}-${i}-${layoutVersion}`}

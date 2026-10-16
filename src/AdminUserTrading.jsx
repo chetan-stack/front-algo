@@ -93,8 +93,8 @@ function MarketBlock({ username, market }) {
               </button>)
           })}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 6 }}>
-          <Stat label="Today P&L" value={p ? `${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}` : '—'} color={!p ? C.dim : p.pnl >= 0 ? C.up : C.down} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 6 }}>
+          <Stat label="Today P&L" value={p ? `${p.pnl >= 0 ? '+' : ''}${Math.abs(p.pnl) >= 1000 ? Math.round(p.pnl).toLocaleString('en-IN') : p.pnl.toFixed(2)}` : '—'} color={!p ? C.dim : p.pnl >= 0 ? C.up : C.down} />
           <Stat label="Orders" value={p?.orders ?? '—'} />
           <Stat label="SL hits" value={p?.losses ?? '—'} color={p?.losses ? C.down : C.text} />
           <Stat label="Open" value={open} color={open ? C.warn : C.text} />

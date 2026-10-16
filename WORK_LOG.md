@@ -6,6 +6,24 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-10-16 — Market Analysis: AI investment planner (uncommitted, backend restart needed)
+- ai_chat.py: POST /api/ai/invest-plan {amount ₹1k–10cr, market ANY|INDIA_STOCKS|INDIA_OPTIONS|CRYPTO, risk LOW|MEDIUM|HIGH}.
+  Haiku (claude_code with --json-schema → structured_output, shared 2-slot semaphore, no tools) builds 0–4 trades from the latest market_scan.json; streamed NDJSON
+  (keeps the cloudflare tunnel alive). invest_numbers() drops wrong-way levels, computes qty / ₹ max loss / max profit /
+  expected value in code (no leverage; options = premium budget with SL/target % of premium), scales capital so total
+  max loss <= 1/2/3% of the amount. Counts as 1 AI question (DAILY_LIMIT, refunded on failure).
+- src/MarketAnalysis.jsx: InvestPlanner section at the top (amount, market, risk → plan table, View strategy on chart).
+  Per row "Place order" (index options → /api/trading/ai-enter-option-order with the plan's strike, crypto →
+  /api/crypto/trading/enter-order long/short; stocks not orderable — no equity route). Real vs paper = that account's
+  "With money" (button shows 💰 real / 📝 paper, confirm dialog). Qty and auto-exit SL/target come from Trading settings.
+  "Check live margin" (on click only): /api/trading|crypto/trading/margin-estimate → exact cost, ₹ loss at SL, ₹ profit
+  at target per row with the account's lots / leverage (India priced at the ATM strike of the right type).
+- Plans saved for the day: _save_plan() → invest_plans.json (gitignored) {user: {date, plans[≤10] newest first}};
+  GET /api/ai/invest-plan returns today's; the tab opens on the latest with "Today's saved plans" chips.
+  Place order / View strategy moved under the trade name (were off-screen in the last column).
+- test_invest_plan.py: offline check of invest_numbers + saved plans.
+- Also earlier, not logged: App.jsx `<TradingPanel key={market}>` (crypto tab showed India config), Admin P&L compact format.
+
 ## 2026-10-14 — Admin tab: per-user auto-strategy checkboxes + today's P&L / orders (frontend only, uncommitted)
 - src/AdminUserTrading.jsx (new): right-side "Auto strategy & today's results" box in Admin (one block per user, with Act as), India (+ Crypto if crypto_port)
   line with Auto / NIFTY / BANKNIFTY / SENSEX (crypto: Auto / BTC / ETH / XAUT) checkboxes that

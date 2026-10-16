@@ -27,4 +27,5 @@ dist-ssr
 users.db
 __pycache__
 ai_usage.json
+invest_plans.json
 models/

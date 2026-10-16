@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import traceback
 
 import requests
@@ -133,8 +134,9 @@ def _image_block(image):
     return None
 
 
-def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_slots):
-    """Run one headless Claude Code turn. Yields ("text", delta), ("status", msg), ("error", msg)."""
+def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_slots, schema=None):
+    """Run one headless Claude Code turn. Yields ("text", delta), ("status", msg), ("error", msg);
+    with a JSON schema also ("json", object) at the end (Claude Code's structured output)."""
     if not slots.acquire(timeout=60):
         yield "error", "AI is busy with other questions — try again in a minute."
         return
@@ -145,7 +147,8 @@ def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_
             [CLAUDE, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
              "--include-partial-messages", "--tools", tools, *(["--allowedTools", tools] if tools else []),
              "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
-             "--system-prompt", system, *(["--model", model] if model else [])],
+             "--system-prompt", system, *(["--model", model] if model else []),
+             *(["--json-schema", json.dumps(schema)] if schema else [])],
             cwd=CWD, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, text=True,
         )
         killer = threading.Timer(TIMEOUT, proc.kill)
@@ -162,6 +165,8 @@ def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_
                 e = ev.get("event") or {}
                 if e.get("type") == "content_block_delta" and (e.get("delta") or {}).get("type") == "text_delta":
                     yield "text", e["delta"]["text"]
+                elif e.get("type") == "content_block_delta" and schema:  # structured output streams as tool input
+                    yield "status", "AI is building your plan…"
                 elif e.get("type") == "content_block_start" and (e.get("content_block") or {}).get("type") in ("tool_use", "server_tool_use"):
                     yield "status", "Searching the web…" if "Search" in e["content_block"].get("name", "") else "Reading a web page…"
             elif ev.get("type") == "result":
@@ -172,6 +177,11 @@ def claude_code(content, system, model=None, tools="WebSearch,WebFetch", slots=_
             errlog.seek(0)
             err = (result or {}).get("result") or errlog.read()[-300:].strip() or "timed out"
             yield "error", f"Claude Code failed: {err}"
+        elif schema:
+            if result.get("structured_output"):
+                yield "json", result["structured_output"]
+            else:
+                yield "error", "Claude Code returned no structured answer"
     except FileNotFoundError:
         yield "error", f"Claude Code CLI not found at {CLAUDE}."
     finally:
@@ -322,3 +332,187 @@ def product_chat(request: Request, payload: dict = Body(...)):
             _count(k, -1)
         raise HTTPException(502, "The assistant is unavailable right now. Please try again.")
     return {"answer": answer[:PUBLIC_MAX_ANSWER]}
+
+
+# Market Analysis "AI investment planner": the user gives an amount, market and risk level; the AI
+# builds trades from the latest market_scan.json (same data as the tab). The AI picks the trades,
+# levels, capital split and win probability; quantities and ₹ outcomes are computed here, never
+# trusted from the AI, and total max loss is capped at the risk level. Counts as one AI question.
+SCAN_FILE = os.path.join(os.environ.get("ANALYSIS_DIR", os.path.expanduser("~/tradingview-analysis")), "market_scan.json")
+INVEST_MARKETS = {"ANY": "any market", "INDIA_STOCKS": "India intraday stocks only", "INDIA_OPTIONS": "India index options only", "CRYPTO": "crypto only"}
+RISK_CAP = {"LOW": 1.0, "MEDIUM": 2.0, "HIGH": 3.0}  # max total loss, % of the amount
+INVEST_SYSTEM = """You build an intraday trading plan for ONE user's capital from a market snapshot (JSON, given below the request).
+Use only the snapshot's prices, levels, news and the analyst's playbook; never invent prices. India hours 09:15-15:30 IST,
+no new entries after 15:00, square off 15:10. Crypto prices are in USD; capital is in INR.
+Fill the answer schema; field meanings:
+{"summary": "2-3 lines: market condition now and the approach", "trades": [{"market": "INDIA_STOCK|INDIA_OPTION|CRYPTO",
+"symbol": "exactly as in the snapshot (stock symbol, NIFTY/BANKNIFTY/SENSEX, BTC/ETH/XAUT)", "side": "BUY|SELL",
+"instrument": "what to trade, e.g. 'RELIANCE intraday' or 'NIFTY 25300 CE nearest weekly' or 'BTC futures'",
+"strategy": "playbook name or setup", "capital": rupees_for_this_trade, "entry": price, "stoploss": price, "target": price,
+"option_sl_pct": null_or_percent_of_premium, "option_target_pct": null_or_percent_of_premium,
+"win_probability": 0-100, "why": "one line"}], "cash_reserve_reason": "one line", "avoid": ["..."]}
+Rules: entry/stoploss/target are prices of the UNDERLYING (for options too: the index level that triggers / invalidates);
+BUY needs stoploss < entry < target, SELL the reverse; reward:risk at least 1.5. For INDIA_OPTION always buy CE (bullish)
+or PE (bearish) with side BUY/SELL meaning bullish/bearish, and give option_sl_pct / option_target_pct (premium moves ~0.5x
+the index, so e.g. 30 / 50). 1-4 trades, total capital <= amount, keep 20%+ in reserve when risk is HIGH in the snapshot.
+win_probability is your honest estimate from the setup quality and conditions (rarely above 65). If there is no edge,
+return "trades": [] and say why. Never promise profit."""
+
+
+_num_or_null = {"type": ["number", "null"]}
+INVEST_SCHEMA = {"type": "object", "required": ["summary", "trades", "cash_reserve_reason", "avoid"], "properties": {
+    "summary": {"type": "string"}, "cash_reserve_reason": {"type": "string"}, "avoid": {"type": "array", "items": {"type": "string"}},
+    "trades": {"type": "array", "maxItems": 4, "items": {"type": "object", "required": [
+        "market", "symbol", "side", "instrument", "strategy", "capital", "entry", "stoploss", "target",
+        "option_sl_pct", "option_target_pct", "win_probability", "why"], "properties": {
+        "market": {"enum": ["INDIA_STOCK", "INDIA_OPTION", "CRYPTO"]}, "symbol": {"type": "string"}, "side": {"enum": ["BUY", "SELL"]},
+        "instrument": {"type": "string"}, "strategy": {"type": "string"}, "capital": {"type": "number"},
+        "entry": {"type": "number"}, "stoploss": {"type": "number"}, "target": {"type": "number"},
+        "option_sl_pct": _num_or_null, "option_target_pct": _num_or_null, "win_probability": {"type": "number"}, "why": {"type": "string"}}}}}}
+
+
+def _num(v):
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+
+
+def invest_numbers(plan, amount, risk, usdinr):
+    """Check the AI's trades and compute quantity, max loss, max profit and expected value in ₹.
+    Drops trades with wrong-way levels; scales capital down so total max loss <= RISK_CAP[risk] % of amount."""
+    trades, dropped = [], []
+    for t in plan.get("trades") or []:
+        if not isinstance(t, dict):
+            continue
+        e, sl, tg, cap = (_num(t.get(k)) for k in ("entry", "stoploss", "target", "capital"))
+        side, mkt = t.get("side"), t.get("market")
+        ok = None not in (e, sl, tg, cap) and ((side == "BUY" and sl < e < tg) or (side == "SELL" and tg < e < sl))
+        if mkt == "INDIA_OPTION":
+            ok = ok and _num(t.get("option_sl_pct")) and _num(t.get("option_target_pct")) and t["option_sl_pct"] < 100
+        if mkt not in ("INDIA_STOCK", "INDIA_OPTION", "CRYPTO") or not ok:
+            dropped.append(f"{t.get('symbol')}: levels didn't check out (entry {t.get('entry')}, SL {t.get('stoploss')}, target {t.get('target')})")
+            continue
+        trades.append({**t, "capital": cap, "win_probability": max(0, min(95, _num(t.get("win_probability")) or 0))})
+    scale = 1.0
+    if sum(t["capital"] for t in trades) > amount:  # AI over-allocated
+        scale = amount / sum(t["capital"] for t in trades)
+
+    def compute(t, cap):
+        e, sl, tg = t["entry"], t["stoploss"], t["target"]
+        if t["market"] == "INDIA_OPTION":  # premium budget: lots are bought at the live premium
+            return {"capital": round(cap), "qty": None, "max_loss": cap * t["option_sl_pct"] / 100, "max_profit": cap * t["option_target_pct"] / 100}
+        if t["market"] == "CRYPTO":
+            qty = round(cap / (e * usdinr), 6)
+            fx = usdinr
+        else:
+            qty = int(cap // e)  # no leverage assumed
+            fx = 1
+        return {"capital": round(qty * e * fx), "qty": qty, "max_loss": qty * abs(e - sl) * fx, "max_profit": qty * abs(tg - e) * fx}
+
+    for _ in range(2):  # second pass only if the risk cap needs it
+        rows = [{**t, **compute(t, t["capital"] * scale)} for t in trades]
+        loss = sum(r["max_loss"] for r in rows)
+        cap_loss = amount * RISK_CAP[risk] / 100
+        if loss <= cap_loss or not loss:
+            break
+        scale *= cap_loss / loss
+    out = []
+    for r in rows:
+        if r["qty"] == 0:
+            dropped.append(f"{r['symbol']}: one share costs more than its share of the capital")
+            continue
+        p = r["win_probability"] / 100
+        out.append({**r, "max_loss": round(r["max_loss"]), "max_profit": round(r["max_profit"]),
+                    "expected": round(p * r["max_profit"] - (1 - p) * r["max_loss"])})
+    used = sum(r["capital"] for r in out)
+    return {"trades": out, "dropped": dropped, "amount": amount, "risk": risk, "risk_cap_pct": RISK_CAP[risk],
+            "used": used, "reserve": round(amount - used), "max_loss": sum(r["max_loss"] for r in out),
+            "max_profit": sum(r["max_profit"] for r in out), "expected": sum(r["expected"] for r in out), "usdinr": usdinr}
+
+
+PLANS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "invest_plans.json")
+PLANS_PER_DAY = 10  # kept per user for today; older days are dropped
+_plans_lock = threading.Lock()
+
+
+def _save_plan(user, plan):
+    """Keep the user's plans for today (IST), newest first, so they survive refresh / tab switch."""
+    today = f"{datetime.datetime.now(IST):%Y-%m-%d}"
+    with _plans_lock:
+        try:
+            with open(PLANS_FILE) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        data = {u: v for u, v in data.items() if v.get("date") == today}
+        mine = data.setdefault(user["username"], {"date": today, "plans": []})
+        mine["plans"] = [plan, *mine["plans"]][:PLANS_PER_DAY]
+        tmp = f"{PLANS_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, PLANS_FILE)
+
+
+def _invest_stream(user, amount, market, risk, left):
+    line = lambda kind, value: json.dumps({"t": kind, "v": value}) + "\n"
+    failed = False
+    try:
+        with open(SCAN_FILE) as f:
+            scan = json.load(f)
+        ai = scan.get("ai") or {}
+        snap = {"ts": scan.get("ts"), "india_open": scan.get("india_open"), "indices": scan.get("indices"),
+                "global": scan.get("global"), "stocks": scan.get("stocks"), "crypto": scan.get("crypto"),
+                "news": [{k: n.get(k) for k in ("title", "impact", "affects", "ts")} for n in (scan.get("news") or [])[:10]],
+                "analyst": {k: ai.get(k) for k in ("mood", "risk", "when_to_trade", "playbook", "markets", "stocks", "avoid")}}
+        usdinr = _num(((scan.get("global") or {}).get("USD/INR") or {}).get("price")) or 88.0
+        prompt = (f"Request: amount ₹{amount:,.0f}, market: {INVEST_MARKETS[market]}, user's risk level: {risk} "
+                  f"(total max loss must stay under {RISK_CAP[risk]}% = ₹{amount * RISK_CAP[risk] / 100:,.0f}). "
+                  f"Now: {datetime.datetime.now(IST):%A %Y-%m-%d %H:%M} IST. USD/INR {usdinr}.\n\nSnapshot:\n{json.dumps(snap)}")
+        yield line("status", f"AI is reading the market snapshot from {scan.get('ts')}…")
+        plan, last = None, 0.0
+        for kind, value in claude_code([{"type": "text", "text": prompt}], INVEST_SYSTEM, "haiku", tools="", schema=INVEST_SCHEMA):
+            if kind == "json":
+                plan = value
+            elif kind == "error":
+                failed = True
+                yield line("error", value)
+            elif time.time() - last > 3:  # throttled status: keeps the connection alive through the tunnel
+                last = time.time()
+                yield line("status", "AI is building your plan…")
+        if not failed and plan is not None:
+            res = invest_numbers(plan, amount, risk, usdinr)
+            res = {**res, "market": market, "summary": str(plan.get("summary") or ""),
+                   "cash_reserve_reason": str(plan.get("cash_reserve_reason") or ""),
+                   "avoid": [str(a) for a in plan.get("avoid") or []][:6], "data_ts": scan.get("ts"),
+                   "built_at": f"{datetime.datetime.now(IST):%H:%M}"}
+            _save_plan(user, res)
+            yield line("plan", res)
+    except Exception as e:
+        traceback.print_exc()
+        failed = True
+        yield line("error", f"Plan failed: {e}")
+    if failed:
+        refund_quota(user)
+        if left is not None:
+            yield line("quota", {"left": left + 1, "limit": DAILY_LIMIT})
+    yield line("done", None)
+
+
+@router.get("/api/ai/invest-plan")
+def invest_plans_today(user=Depends(auth.get_current_user)):
+    try:
+        with open(PLANS_FILE) as f:
+            mine = json.load(f).get(user["username"]) or {}
+    except (OSError, ValueError):
+        mine = {}
+    today = f"{datetime.datetime.now(IST):%Y-%m-%d}"
+    return {"plans": mine.get("plans", []) if mine.get("date") == today else []}
+
+
+@router.post("/api/ai/invest-plan")
+def invest_plan(payload: dict = Body(...), user=Depends(auth.get_current_user)):
+    amount, market, risk = _num(payload.get("amount")), payload.get("market", "ANY"), payload.get("risk", "MEDIUM")
+    if not amount or not 1000 <= amount <= 1e8 or market not in INVEST_MARKETS or risk not in RISK_CAP:
+        raise HTTPException(400, "amount must be ₹1,000 – ₹10 crore; market and risk from the list")
+    if not os.path.exists(SCAN_FILE):
+        raise HTTPException(503, "No market analysis yet — wait for the first scan.")
+    left = take_quota(user)
+    return StreamingResponse(_invest_stream(user, amount, market, risk, left), media_type="application/x-ndjson")
