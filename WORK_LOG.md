@@ -6,6 +6,43 @@ pending, so a new session can pick up without the old conversation.
 
 ---
 
+## 2026-11-11 — Admin restart-all: choose users dialog (backend restart needed, uncommitted)
+- Admin.jsx: "Restart all strategy + exit bots" (India + crypto) opens a dialog with a checkbox per user (all checked,
+  Check all / Uncheck all, crypto lists only crypto users). Replaces the confirm().
+- server.py: /api/admin/bots/restart-all takes optional `users=a,b,c`; omitted = every account (old behaviour).
+
+## 2026-11-11 — Chart AI chat is a draggable floating panel (frontend only, uncommitted)
+- Chart.jsx: AiChat now sits inside the existing FloatPanel (drag by ⠿ header, ▾ collapse, new optional × close).
+  FloatPanel hides collapsed children instead of unmounting them, so chat history survives collapse.
+  Optional `storageKey` prop saves the drag offset to localStorage (AI chat uses "aiChatPos"), restored on reopen/reload.
+- AiChat.jsx: messages + last trade idea saved to localStorage `aiChartChat:<actingAs>` for the current day (new day = empty).
+  "＋ New chat" (top of the message list, confirm) clears it — deletes the saved chat, no archive.
+- AiChat.jsx: dropped the full-height right drawer + own header; now a 320x480 box, CSS `resize: both`.
+
+## 2026-10-16 — UI refresh (frontend only, uncommitted)
+- index.css: new tab bar (brand, active indicator, badge), app-wide hover / focus-visible / disabled states, table row hover,
+  dark scrollbars, input box-sizing (Admin inputs overflowed), fade-up / pulse-dot animations, reduced-motion respected.
+- App.jsx header (one row): main tabs (Charts, Trading, Crypto Charts, Crypto Trading, Market Analysis, AI Chat) +
+  dropdown groups Orders (Order Book, Failed Orders, Notifications, Alerts) / Reports / Admin (label shows the open page),
+  right side: 🔔 alerts bell with count, 1/2/4 screen switch, Layouts menu (open / delete / save / close), user menu
+  (name, Broker account, Return to my account, Log out). `menu` state, closes on outside click / Escape. Per-screen
+  selects still list every tab.
+- MarketAnalysis.jsx: sticky header (NSE session pill from IST clock, section nav), market pulse (AI mood + risk, bias
+  meter, index/BTC tiles), Section wrapper, market cards for "What to trade now", playbook as collapsible cards,
+  RangeBar (day low-high with price, support, resistance) on index/crypto cards, movers heat map, news impact filter,
+  planner: amount quick-picks, market/risk chips, "you risk at most ₹X", allocation bar, win-chance bars, empty state.
+- TradingPanel.jsx (India + Crypto): hero header (LIVE MONEY / PAPER badge from SAVED withmoney, auto-strategy dot,
+  P&L cards: today, open positions, month, win-rate ring from monthwisedata, last 300 days), settings card with toggle
+  switches (.tp-config CSS on real checkboxes), "unsaved changes" badge + gradient Save, icon section titles, open orders
+  sorted open-first with OPEN badge / dimmed closed rows / profit chips, signal trend pills, MonthCalendar heat map
+  (table kept under "Show as table"). saveConfig now also updates data.form_data (badges follow the saved state).
+  No handler / API changes.
+  Month calendar follow-up: ‹ Prev / Next › / This month buttons (max = current month), the top date picker also moves
+  the calendar to that date's month, and load() ignores replies from older requests (loadSeq) so a quick month change
+  can't be overwritten by a late response. Backend month data was verified correct for Aug/Sep/Oct (India + crypto).
+- parseProfit moved to pnl.js (shared by AdminUserTrading + TradingPanel), now also parses brokerage.
+- orderAlerts.jsx IndexStatus: ellipsis instead of overflowing its grid cell.
+
 ## 2026-10-16 — Market Analysis: AI investment planner (uncommitted, backend restart needed)
 - ai_chat.py: POST /api/ai/invest-plan {amount ₹1k–10cr, market ANY|INDIA_STOCKS|INDIA_OPTIONS|CRYPTO, risk LOW|MEDIUM|HIGH}.
   Haiku (claude_code with --json-schema → structured_output, shared 2-slot semaphore, no tools) builds 0–4 trades from the latest market_scan.json; streamed NDJSON

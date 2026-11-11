@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from './api'
 import { configPayload } from './tradingConfig'
+import { parseProfit } from './pnl'
 
 // Admin tab, right side: one card per user with their auto-strategy switches (saved straight
 // to their dashboard, no "Act as" needed) + today's P&L, order count, stoploss hits, open positions.
@@ -12,11 +13,6 @@ const MARKETS = {
 const C = { text: '#d1d4dc', dim: '#787b86', line: '#2a2e39', bg: '#131722', up: '#26a69a', down: '#ef5350', warn: '#ffb74d' }
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })  // YYYY-MM-DD IST
 
-// "123.5 - no. of order: 5 - brokreg: 250- stoploss: 2"
-function parseProfit(s) {
-  const m = /^(-?[\d.]+) - no\. of order: (\d+).*stoploss: (\d+)/.exec(String(s ?? ''))
-  return m ? { pnl: Number(m[1]), orders: Number(m[2]), losses: Number(m[3]) } : null
-}
 
 function Stat({ label, value, color = C.text }) {
   return (

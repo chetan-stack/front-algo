@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import AiOrderControls from './AiOrderControls'
 import { apiFetch } from './api'
 
@@ -25,11 +25,29 @@ function formatAnalysis(data) {
   return `${(data.bias || '').toUpperCase()} — ${data.summary || ''}\n\n${levels ? 'Levels:\n' + levels : ''}${tradeLine}`
 }
 
-export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis, onClose }) {
-  const [messages, setMessages] = useState([])
+// Chart chat is kept for the current day (per browser, per acted-as user); a new day starts empty.
+function storeKey() {
+  try { return `aiChartChat:${localStorage.getItem('actingAs') || ''}` } catch { return 'aiChartChat:' }
+}
+function loadToday() {
+  try {
+    const d = JSON.parse(localStorage.getItem(storeKey()))
+    if (d?.date === new Date().toDateString()) return d
+  } catch { /* storage blocked / bad JSON */ }
+  return {}
+}
+
+export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis }) {
+  const [messages, setMessages] = useState(() => loadToday().messages || [])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [lastTrade, setLastTrade] = useState(null)
+  const [lastTrade, setLastTrade] = useState(() => loadToday().lastTrade || null)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storeKey(), JSON.stringify({ date: new Date().toDateString(), messages: messages.slice(-60), lastTrade }))
+    } catch { /* storage blocked/full */ }
+  }, [messages, lastTrade])
 
   async function analyze() {
     if (busy) return
@@ -87,12 +105,17 @@ export default function AiChat({ symbol, getCandles, takeScreenshot, onAnalysis,
   }
 
   return (
-    <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 320, maxWidth: '92vw', background: '#1e222d', borderLeft: '1px solid #2a2e39', zIndex: 25, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #2a2e39' }}>
-        <b style={{ color: '#d1d4dc', fontSize: 13 }}>AI Assistant</b>
-        <button onClick={onClose} style={{ background: 'transparent', color: '#787b86', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>
-      </div>
+    <div style={{ width: 320, height: 480, maxWidth: '92vw', maxHeight: '75vh', minWidth: 240, minHeight: 200, resize: 'both', overflow: 'hidden', background: '#1e222d', border: '1px solid #2a2e39', borderTop: 'none', borderRadius: '0 0 6px 6px', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {messages.length > 0 && (
+          <button
+            onClick={() => { if (window.confirm('Start a new chat? Today\'s chat will be deleted.')) { setMessages([]); setLastTrade(null) } }}
+            disabled={busy}
+            style={{ position: 'sticky', top: 0, zIndex: 1, alignSelf: 'flex-end', background: '#1e222d', color: '#787b86', border: '1px solid #2a2e39', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}
+          >
+            ＋ New chat
+          </button>
+        )}
         {messages.length === 0 && (
           <div style={{ color: '#787b86', fontSize: 12 }}>
             Tap "Analyze this chart" for a screenshot-based read, or ask a question below.

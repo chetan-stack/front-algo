@@ -112,24 +112,79 @@ code {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 6px;
+  padding: 8px 12px;
   border-bottom: 1px solid #2a2e39;
+  background: linear-gradient(180deg, #171b26 0%, #131722 100%);
+  font-size: 13px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  color: #d1d4dc;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.brand b {
+  color: #fff;
+  background: linear-gradient(135deg, #2962ff, #7c4dff);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+.brand-mark {
+  color: #2962ff;
+  font-size: 16px;
 }
 
 .tab-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
-  color: #d1d4dc;
-  border: 1px solid #2a2e39;
-  border-radius: 4px;
-  padding: 4px 10px;
+  color: #b2b5be;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 10px;
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-
+.tab-btn:hover {
+  background: #1e222d;
+  color: #fff;
+  border-color: #2a2e39;
+}
 .tab-btn.active {
+  background: rgba(41, 98, 255, 0.16);
+  border-color: rgba(41, 98, 255, 0.55);
+  color: #fff;
+  box-shadow: inset 0 -2px 0 #2962ff;
+}
+.tab-ico {
+  font-size: 13px;
+  line-height: 1;
+}
+.tab-badge {
+  background: #ef5350;
+  color: #fff;
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.tab-sep {
+  width: 1px;
+  height: 20px;
   background: #2a2e39;
+  margin: 0 4px;
 }
 
 .tab-bar-spacer {
@@ -147,6 +202,9 @@ code {
   }
   .tab-bar-spacer {
     margin-left: 0;
+  }
+  .tab-sep, .brand {
+    display: none;
   }
 }
 
@@ -171,4 +229,267 @@ code {
   .chart-toolbar .search-input {
     width: 160px;
   }
+}
+
+/* App-wide polish. Components style themselves inline, so these only add what inline
+   styles can't: hover / focus / disabled states, row highlight, scrollbars, motion. */
+body {
+  background: #131722;
+}
+input, select, textarea {
+  box-sizing: border-box;  /* width: 100% inputs stay inside their card */
+  max-width: 100%;
+}
+::selection {
+  background: rgba(41, 98, 255, 0.45);
+  color: #fff;
+}
+button {
+  transition: filter 0.15s, transform 0.05s, box-shadow 0.15s;
+}
+button:not(:disabled):hover {
+  filter: brightness(1.18);
+}
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed !important;
+}
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 2px solid #2962ff;
+  outline-offset: 2px;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: #2962ff !important;
+  box-shadow: 0 0 0 3px rgba(41, 98, 255, 0.18);
+}
+tbody tr {
+  transition: background 0.12s;
+}
+tbody tr:hover {
+  background: rgba(41, 98, 255, 0.06);
+}
+summary {
+  cursor: pointer;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #363a45 transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #363a45;
+  border-radius: 6px;
+  border: 2px solid #131722;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4f5c;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.fade-up {
+  animation: fade-up 0.35s ease both;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Trading panel settings: checkboxes drawn as toggle switches (still real checkboxes). */
+.tp-config input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 19px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #363a45;
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  transition: background 0.2s;
+}
+.tp-config input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #d1d4dc;
+  transition: transform 0.2s;
+}
+.tp-config input[type="checkbox"]:checked {
+  background: #2962ff;
+}
+.tp-config input[type="checkbox"]:checked::after {
+  transform: translateX(15px);
+  background: #fff;
+}
+
+/* Header: grouped tabs, dropdown menus, alert bell, screen switch, user menu. */
+.tab-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.caret {
+  font-size: 10px;
+  color: #787b86;
+  margin-left: 2px;
+}
+.menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  min-width: 220px;
+  background: #1e222d;
+  border: 1px solid #363a45;
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: fade-up 0.15s ease both;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #d1d4dc;
+  padding: 7px 10px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu-item:hover {
+  background: #2a2e39;
+  color: #fff;
+}
+.menu-item.on {
+  background: rgba(41, 98, 255, 0.16);
+  color: #fff;
+}
+.menu-sep {
+  height: 1px;
+  background: #2a2e39;
+  margin: 6px 0;
+}
+.menu-note {
+  color: #787b86;
+  font-size: 12px;
+  padding: 6px 10px;
+  white-space: normal;
+}
+.icon-btn {
+  position: relative;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.icon-btn:hover, .icon-btn.active {
+  background: #1e222d;
+  border-color: #2a2e39;
+}
+.dot-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  background: #ef5350;
+  color: #fff;
+  border-radius: 9px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.seg button {
+  background: transparent;
+  border: 0;
+  color: #b2b5be;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.seg button + button {
+  border-left: 1px solid #2a2e39;
+}
+.seg button.on {
+  background: rgba(41, 98, 255, 0.22);
+  color: #fff;
+}
+.user-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 2px;
+}
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #fff;
+  background: linear-gradient(135deg, #2962ff, #7c4dff);
+}
+.tab-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.tab-group .tab-btn {
+  padding: 5px 8px;
+  gap: 5px;
+}
+.caret {
+  font-size: 11px;
+}
+@media (max-width: 1500px) {
+  .brand-text { display: none; }
+}
+@media (max-width: 700px) {
+  .tab-right { margin-left: 0; }
 }

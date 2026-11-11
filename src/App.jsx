@@ -21,6 +21,12 @@ const LAYOUTS = {
   4: { cols: 2, rows: 2 },
 }
 
+// One glyph per tab so the bar can be scanned at a glance (plain unicode, no icon library).
+const TAB_ICONS = {
+  charts: '📈', trading: '🤖', 'crypto-charts': '🪙', 'crypto-trading': '⚡', orderbook: '📒', 'failed-orders': '⛔',
+  notifications: '🔔', alerts: '🚨', 'market-analysis': '🧭', 'ai-chat': '💬', broker: '🏦', admin: '🛡️', logs: '📜',
+  'all-notifications': '📣', analysis: '🇮🇳', 'crypto-analysis': '📊',
+}
 const TABS = [
   { id: 'charts', label: 'Charts' },
   { id: 'trading', label: 'Trading' },
@@ -101,6 +107,16 @@ export default function App() {
   }
   const [jump, setJump] = useState(null)
   const [unseenAlerts, setUnseenAlerts] = useState(0)
+  // Header dropdowns (Orders / Reports / Admin / Layouts / user): one open at a time;
+  // a click outside or Escape closes it.
+  const [menu, setMenu] = useState(null)
+  useEffect(() => {
+    if (!menu) return
+    const close = (e) => { if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest('.menu-wrap')) setMenu(null) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close) }
+  }, [menu])
   const { cols, rows } = LAYOUTS[count]
   // Every user gets an Alerts tab, but non-admins get their OWN alerts only (backend-filtered:
   // their own order alerts, plus market alerts for symbols they trade) — never another user's.
@@ -109,7 +125,7 @@ export default function App() {
     { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'Logs' }, { id: 'all-notifications', label: 'All Notifications' },
     { id: 'alerts', label: 'Alerts' },
     { id: 'analysis', label: 'India Report' }, { id: 'crypto-analysis', label: 'Crypto Report' },
-  ] : TABS).map((t) => (t.id === 'alerts' && unseenAlerts > 0 ? { ...t, label: `Alerts (${unseenAlerts})` } : t))
+  ] : TABS).map((t) => (t.id === 'alerts' && unseenAlerts > 0 ? { ...t, badge: unseenAlerts > 99 ? '99+' : unseenAlerts } : t))
 
   // Alert badge for everyone: count alerts (mine, or all if admin) newer than the last time
   // the Alerts tab was opened. Timestamps are "YYYY-MM-DD HH:MM:SS" IST, so string-comparable.
@@ -216,52 +232,89 @@ export default function App() {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#131722' }}>
       <div className="tab-bar">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setView(t.id)}
-            className={`tab-btn${view === t.id ? ' active' : ''}`}
-          >
-            {t.label}
-          </button>
-        ))}
-        {Object.keys(LAYOUTS).map((n) => (
-          <button
-            key={n}
-            onClick={() => setCount(Number(n))}
-            className={`tab-btn${count === Number(n) ? ' active' : ''}`}
-          >
-            {n} screen{n === '1' ? '' : 's'}
-          </button>
-        ))}
-        {presets.map((pr) => (
-          <button
-            key={pr.name}
-            onClick={() => openPreset(pr)}
-            className={`tab-btn${activePreset?.name === pr.name ? ' active' : ''}`}
-            title={`${pr.count} screen${pr.count === 1 ? '' : 's'}: ${pr.panes.join(', ')}`}
-          >
-            ★ {pr.name}
-            <span
-              role="button" aria-label={`Delete layout ${pr.name}`}
-              onClick={(e) => { e.stopPropagation(); deletePreset(pr.name) }}
-              style={{ marginLeft: 6, color: '#787b86' }}
-            >
-              ✕
+        <span className="brand" title="TradeSmart AI"><span className="brand-mark">◆</span><span className="brand-text">TradeSmart</span><b>AI</b></span>
+        {(() => {
+          const byId = Object.fromEntries(tabs.map((t) => [t.id, t]))
+          const go = (id) => { setView(id); setMenu(null) }
+          const tabBtn = (id) => byId[id] && (
+            <button key={id} onClick={() => go(id)} className={`tab-btn${view === id ? ' active' : ''}`} title={byId[id].label}>
+              <span className="tab-ico" aria-hidden="true">{TAB_ICONS[id]}</span>{byId[id].label}
+            </button>)
+          // A group of tabs behind one button; the button lights up when one of its tabs is open.
+          const group = (key, icon, label, ids) => {
+            const items = ids.filter((id) => byId[id])
+            if (!items.length) return null
+            const current = items.find((id) => id === view)
+            return (
+              <span key={key} className="menu-wrap">
+                <button onClick={() => setMenu(menu === key ? null : key)} className={`tab-btn${current ? ' active' : ''}`} aria-haspopup="menu" aria-expanded={menu === key}>
+                  <span className="tab-ico" aria-hidden="true">{current ? TAB_ICONS[current] : icon}</span>{current ? byId[current].label : label}<span className="caret">▾</span>
+                </button>
+                {menu === key && (
+                  <div className="menu" role="menu">
+                    {items.map((id) => (
+                      <button key={id} role="menuitem" onClick={() => go(id)} className={`menu-item${view === id ? ' on' : ''}`}>
+                        <span className="tab-ico" aria-hidden="true">{TAB_ICONS[id]}</span>{byId[id].label}
+                        {byId[id].badge ? <span className="tab-badge" style={{ marginLeft: 'auto' }}>{byId[id].badge}</span> : null}
+                      </button>))}
+                  </div>)}
+              </span>)
+          }
+          return <>
+            <nav className="tab-group" aria-label="Main">
+              {['charts', 'trading', 'crypto-charts', 'crypto-trading', 'market-analysis', 'ai-chat'].map(tabBtn)}
+              {group('orders', '📒', 'Orders', ['orderbook', 'failed-orders', 'notifications', 'alerts'])}
+              {group('reports', '📊', 'Reports', ['analysis', 'crypto-analysis'])}
+              {group('admin', '🛡️', 'Admin', ['admin', 'logs', 'all-notifications'])}
+            </nav>
+            <span className="tab-right">
+            <button onClick={() => go('alerts')} className={`icon-btn${view === 'alerts' ? ' active' : ''}`} title={unseenAlerts ? `${unseenAlerts} new alerts` : 'Alerts'} aria-label="Alerts">
+              🔔{unseenAlerts > 0 && <span className="dot-badge">{unseenAlerts > 99 ? '99+' : unseenAlerts}</span>}
+            </button>
+            <span className="seg" role="radiogroup" aria-label="Screens">
+              {Object.keys(LAYOUTS).map((n) => (
+                <button key={n} role="radio" aria-checked={count === Number(n)} onClick={() => setCount(Number(n))}
+                  className={count === Number(n) ? 'on' : ''} title={`${n} screen${n === '1' ? '' : 's'}`}>
+                  {n === '1' ? '▢' : n === '2' ? '◫' : '⊞'}
+                </button>))}
             </span>
-          </button>
-        ))}
-        {activePreset && (
-          <button onClick={closePreset} className="tab-btn" title={`Close "${activePreset.name}" and go back to the screens you had before`} style={{ color: '#ef5350' }}>
-            ✕ Close layout
-          </button>
-        )}
-        <button onClick={savePreset} className="tab-btn" title="Save the current screens as a layout">
-          + Save layout
-        </button>
-        <button onClick={logout} className="tab-btn tab-bar-spacer" style={{ color: '#787b86' }}>
-          Log out
-        </button>
+            <span className="menu-wrap">
+              <button onClick={() => setMenu(menu === 'layouts' ? null : 'layouts')} className={`tab-btn${activePreset ? ' active' : ''}`} aria-haspopup="menu" aria-expanded={menu === 'layouts'}>
+                <span className="tab-ico" aria-hidden="true">★</span>{activePreset ? activePreset.name : 'Layouts'}<span className="caret">▾</span>
+              </button>
+              {menu === 'layouts' && (
+                <div className="menu" role="menu" style={{ right: 0, left: 'auto' }}>
+                  {presets.length === 0 && <div className="menu-note">No saved layouts yet. Arrange your screens, then save them here.</div>}
+                  {presets.map((pr) => (
+                    <div key={pr.name} className={`menu-item${activePreset?.name === pr.name ? ' on' : ''}`} style={{ padding: 0 }}>
+                      <button role="menuitem" onClick={() => { openPreset(pr); setMenu(null) }} title={`${pr.count} screen${pr.count === 1 ? '' : 's'}: ${pr.panes.join(', ')}`}
+                        style={{ flex: 1, background: 'transparent', border: 0, color: 'inherit', textAlign: 'left', padding: '7px 10px', cursor: 'pointer', font: 'inherit' }}>
+                        ★ {pr.name} <span style={{ color: '#787b86', fontSize: 11 }}>· {pr.count} screen{pr.count === 1 ? '' : 's'}</span>
+                      </button>
+                      <button aria-label={`Delete layout ${pr.name}`} title="Delete layout" onClick={() => deletePreset(pr.name)}
+                        style={{ background: 'transparent', border: 0, color: '#787b86', cursor: 'pointer', padding: '7px 10px' }}>✕</button>
+                    </div>))}
+                  <div className="menu-sep" />
+                  <button role="menuitem" className="menu-item" onClick={() => { savePreset(); setMenu(null) }}>＋ Save current screens…</button>
+                  {activePreset && <button role="menuitem" className="menu-item" style={{ color: '#ef5350' }} onClick={() => { closePreset(); setMenu(null) }}>✕ Close “{activePreset.name}”</button>}
+                </div>)}
+            </span>
+            <span className="menu-wrap">
+              <button onClick={() => setMenu(menu === 'user' ? null : 'user')} className="user-btn" aria-haspopup="menu" aria-expanded={menu === 'user'} title={me || 'Account'}>
+                <span className="avatar">{(me || '?')[0].toUpperCase()}</span><span className="caret">▾</span>
+              </button>
+              {menu === 'user' && (
+                <div className="menu" role="menu" style={{ right: 0, left: 'auto' }}>
+                  <div className="menu-note"><b style={{ color: '#fff' }}>{me || 'Signed in'}</b>{isAdmin ? ' · admin' : ''}{actingAs ? <div style={{ color: '#ffb74d' }}>acting as {actingAs}</div> : null}</div>
+                  <div className="menu-sep" />
+                  {byId.broker && <button role="menuitem" className={`menu-item${view === 'broker' ? ' on' : ''}`} onClick={() => go('broker')}><span className="tab-ico">{TAB_ICONS.broker}</span>Broker account</button>}
+                  {actingAs && <button role="menuitem" className="menu-item" onClick={() => { stopActingAs(); setMenu(null) }}>↩ Return to my account</button>}
+                  <button role="menuitem" className="menu-item" style={{ color: '#ef5350' }} onClick={logout}>⎋ Log out</button>
+                </div>)}
+            </span>
+            </span>
+          </>
+        })()}
       </div>
       {actingAs && (
         <div style={{

@@ -40,8 +40,10 @@ function profitColor(v) {
 // Chart overlay that can be dragged by its header and collapsed with ▾, so it
 // never permanently covers candles/other tools. Offset is a translate on top
 // of the caller's absolute position, so callers keep their own top/left/right.
-function FloatPanel({ title, style, children }) {
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
+function FloatPanel({ title, style, children, onClose, storageKey }) {
+  const [offset, setOffset] = useState(() => {
+    try { return (storageKey && JSON.parse(localStorage.getItem(storageKey))) || { x: 0, y: 0 } } catch { return { x: 0, y: 0 } }
+  })
   const [open, setOpen] = useState(true)
   const dragRef = useRef(null)
   const onPointerDown = (e) => {
@@ -55,7 +57,10 @@ function FloatPanel({ title, style, children }) {
   return (
     <div style={{ position: 'absolute', zIndex: 15, ...style, transform: `translate(${offset.x}px, ${offset.y}px)` }}>
       <div
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null }}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => {
+          if (dragRef.current && storageKey) try { localStorage.setItem(storageKey, JSON.stringify(offset)) } catch {}
+          dragRef.current = null
+        }}
         style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#2a2e39', color: '#d1d4dc', fontSize: 12, padding: '3px 6px', borderRadius: open ? '6px 6px 0 0' : 6, cursor: 'move', userSelect: 'none', touchAction: 'none' }}
       >
         <span style={{ color: '#787b86' }}>⠿</span>
@@ -66,8 +71,11 @@ function FloatPanel({ title, style, children }) {
         >
           {open ? '▾' : '▸'}
         </button>
+        {onClose && (
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: '#d1d4dc', cursor: 'pointer', padding: 0 }}>×</button>
+        )}
       </div>
-      {open && children}
+      <div hidden={!open}>{children}</div>
     </div>
   )
 }
@@ -1102,13 +1110,14 @@ export default function Chart({ jump, onJumpConsumed, market = 'india', defaultS
       )}
 
       {aiOpen && (
+        <FloatPanel title="AI Assistant" style={{ top: 44, right: 8, zIndex: 25 }} onClose={() => setAiOpen(false)} storageKey="aiChatPos">
         <AiChat
           symbol={symbol}
           getCandles={() => candlesRef.current}
           takeScreenshot={() => chartRef.current.takeScreenshot().toDataURL('image/png')}
           onAnalysis={addAiDrawings}
-          onClose={() => setAiOpen(false)}
         />
+        </FloatPanel>
       )}
 
       {(chainLoading || chain) && (

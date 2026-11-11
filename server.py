@@ -998,9 +998,13 @@ def _bulk_accounts(market):
 
 
 @app.post("/api/admin/bots/restart-all")
-def admin_restart_all_strategy_bots(market: str = "india", admin=Depends(auth.require_admin)):
+def admin_restart_all_strategy_bots(market: str = "india", users: str = None, admin=Depends(auth.require_admin)):
+    # users = comma list from the Admin "choose users" dialog; omitted = every account.
+    only = set(users.split(",")) if users is not None else None
     results = []
     for username, account_dir in _bulk_accounts(market):
+        if only is not None and username not in only:
+            continue
         doc = _read_document_py(account_dir) if market == "india" else None
         gap = 8 if doc and not doc["demo_mode"] else 2
         for bot in BULK_BOTS[market][2]:

@@ -12,6 +12,7 @@ const smallDangerBtn = { ...smallBtn, color: '#ef5350' }
 export default function Admin({ onActAsUser }) {
   const [users, setUsers] = useState([])
   const [restartAll, setRestartAll] = useState({ busy: false, msg: '' })
+  const [pick, setPick] = useState(null) // restart dialog: { market, sel: [usernames] }
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [demoMode, setDemoMode] = useState(true)
@@ -141,12 +142,14 @@ export default function Admin({ onActAsUser }) {
   // Every user's auto-strategy + auto-exit in one go (server: /api/admin/bots/restart-all).
   // Takes ~1 min: real accounts are spaced 8s apart for AngelOne's login limit.
   // market = 'india' (default) | 'crypto' (crypto strategy + crypto exit, crypto accounts only)
-  async function restartAllBots(market = 'india') {
-    const what = market === 'crypto' ? 'crypto strategy and crypto exit' : 'auto-strategy and auto-exit'
-    if (!confirm(`Restart ${what} for ALL ${market === 'crypto' ? 'crypto accounts' : 'users'}?\n\nOpen positions are kept; the exit bot picks them up again. Takes about a minute.`)) return
-    setRestartAll({ busy: true, msg: `Restarting all ${market === 'crypto' ? 'crypto ' : ''}strategy + exit bots… (about a minute)` })
+  // Users a restart-all can target (crypto: only users with a crypto account).
+  const pickable = (market) => users.filter((u) => market !== 'crypto' || u.crypto_port != null).map((u) => u.username)
+
+  async function restartAllBots(market, selected) {
+    setPick(null)
+    setRestartAll({ busy: true, msg: `Restarting ${market === 'crypto' ? 'crypto ' : ''}strategy + exit bots for ${selected.length} user(s)…` })
     try {
-      const res = await apiFetch(`/api/admin/bots/restart-all?market=${market}`, { method: 'POST' })
+      const res = await apiFetch(`/api/admin/bots/restart-all?market=${market}&users=${encodeURIComponent(selected.join(','))}`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'restart failed')
       const byUser = {}
@@ -380,7 +383,7 @@ export default function Admin({ onActAsUser }) {
       <div style={box}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <h3 style={{ color: '#d1d4dc', margin: 0 }}>Users</h3>
-          <button onClick={() => restartAllBots()} disabled={restartAll.busy}
+          <button onClick={() => setPick({ market: 'india', sel: pickable('india') })} disabled={restartAll.busy}
             style={{ background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
             {restartAll.busy ? 'Working…' : 'Restart all strategy + exit bots'}
           </button>
@@ -388,7 +391,7 @@ export default function Admin({ onActAsUser }) {
             style={{ background: '#ef5350', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer' }}>
             Stop all strategy + exit bots
           </button>
-          <button onClick={() => restartAllBots('crypto')} disabled={restartAll.busy}
+          <button onClick={() => setPick({ market: 'crypto', sel: pickable('crypto') })} disabled={restartAll.busy}
             style={{ background: '#f0b90b', color: '#131722', border: 'none', borderRadius: 4, padding: '6px 12px', cursor: restartAll.busy ? 'wait' : 'pointer', fontWeight: 600 }}>
             Restart all crypto strategy + exit bots
           </button>
@@ -398,6 +401,38 @@ export default function Admin({ onActAsUser }) {
           </button>
           {restartAll.msg && <span style={{ fontSize: 12, color: '#d1d4dc' }}>{restartAll.msg}</span>}
         </div>
+        {pick && (() => {
+          const all = pickable(pick.market)
+          const allOn = pick.sel.length === all.length
+          const toggle = (u) => setPick({ ...pick, sel: pick.sel.includes(u) ? pick.sel.filter((x) => x !== u) : [...pick.sel, u] })
+          return (
+            <div onClick={() => setPick(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+              <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Choose users to restart" style={{ ...box, width: 320, maxWidth: '92vw', color: '#d1d4dc' }}>
+                <h4 style={{ margin: '0 0 6px' }}>Restart {pick.market === 'crypto' ? 'crypto ' : ''}strategy + exit bots</h4>
+                <div style={{ fontSize: 12, color: '#787b86', marginBottom: 10 }}>Open positions are kept; the exit bot picks them up again. Takes about a minute.</div>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #2a2e39', marginBottom: 4, fontWeight: 600 }}>
+                  <input type="checkbox" checked={allOn} onChange={() => setPick({ ...pick, sel: allOn ? [] : all })} />
+                  {allOn ? 'Uncheck all' : 'Check all'}
+                </label>
+                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  {all.map((u) => (
+                    <label key={u} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={pick.sel.includes(u)} onChange={() => toggle(u)} />
+                      {u}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <button onClick={() => restartAllBots(pick.market, pick.sel)} disabled={!pick.sel.length}
+                    style={{ flex: 1, background: '#2962ff', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 0', cursor: pick.sel.length ? 'pointer' : 'not-allowed' }}>
+                    Restart {pick.sel.length} user{pick.sel.length === 1 ? '' : 's'}
+                  </button>
+                  <button onClick={() => setPick(null)} style={{ ...smallBtn, color: '#d1d4dc', padding: '6px 12px' }}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
         <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>

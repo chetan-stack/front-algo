@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { apiFetch } from './api'
 import { configPayload } from './tradingConfig'
 import { chartTarget } from './chartTarget'
-import { fmtPnl } from './pnl'
+import { fmtPnl, parseProfit } from './pnl'
 import { useAlerts, latestOrderAlert, OrderAlert, ORDER_ALERT_STYLE, useMarketState, IndexStatus } from './orderAlerts'
 
 const box = { background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6, padding: 12 }
@@ -16,6 +16,46 @@ const term = (o) => String(o?.orderterm ?? '').toLowerCase()
 function profitColor(v) {
   const n = typeof v === 'string' ? parseFloat(v) : v
   return n > 0 ? '#26a69a' : n < 0 ? '#ef5350' : '#d1d4dc'
+}
+
+// Section heading: icon + title, optional right-side content.
+function Title({ icon, children, right }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
+      <span style={{ fontSize: 16 }}>{icon}</span>
+      <b style={{ fontSize: 15, color: '#fff' }}>{children}</b>
+      {right && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>{right}</span>}
+    </div>
+  )
+}
+
+// Month P&L as a calendar: one cell per day, colour strength = size of the day's profit / loss.
+function MonthCalendar({ month, breakdown, fmt }) {
+  const [y, m] = month.split('-').map(Number)
+  if (!y || !m) return null
+  const days = new Date(y, m, 0).getDate()
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7  // Monday first
+  const max = Math.max(1, ...Object.values(breakdown).map((v) => Math.abs(Number(v.profit) || 0)))
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)]
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, marginTop: 10 }}>
+      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} style={{ color: '#787b86', fontSize: 11, textAlign: 'center' }}>{d}</div>)}
+      {cells.map((day, i) => {
+        if (!day) return <div key={`x${i}`} />
+        const v = breakdown[`${month}-${String(day).padStart(2, '0')}`]
+        const p = Number(v?.profit) || 0
+        const a = v ? 0.12 + 0.6 * Math.abs(p) / max : 0
+        return (
+          <div key={day} title={v ? `${v.day} ${day}: ${fmt(p)} · ${v.orders} orders · ${v.stoplosses} losing` : 'no trades'}
+            style={{ minHeight: 52, borderRadius: 6, padding: '4px 6px', border: '1px solid #2a2e39', overflow: 'hidden',
+              background: v ? (p >= 0 ? `rgba(38,166,154,${a})` : `rgba(239,83,80,${a})`) : 'transparent' }}>
+            <div style={{ fontSize: 11, color: v ? '#fff' : '#4a4f5c' }}>{day}</div>
+            {v && <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmt(p)}</div>}
+            {v && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.75)' }}>{v.orders} ord · {v.stoplosses} L</div>}
+          </div>)
+      })}
+    </div>
+  )
 }
 
 export default function TradingPanel({ onViewOnChart, market = 'india' }) {
@@ -86,7 +126,9 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
   const [cryptoResults, setCryptoResults] = useState(null)
   const [cryptoSearchBusy, setCryptoSearchBusy] = useState(false)
 
+  const loadSeq = useRef(0)  // only the newest load may update the page (month/date clicked quickly)
   async function load() {
+    const seq = ++loadSeq.current
     setLoading(true)
     setError(null)
     try {
@@ -94,10 +136,12 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       const params = new URLSearchParams({ date, month, ...(client ? { selectclient: client } : {}) })
       const res = await apiFetch(`${prefix}/dashboard?${params}`)
       const d = await res.json()
+      if (seq !== loadSeq.current) return
       if (d.status !== 'success') throw new Error(d.message || 'failed to load')
       setData(d)
       setConfig(d.form_data)
     } catch (e) {
+      if (seq !== loadSeq.current) return
       setError(e.message)
     }
     setLoading(false)
@@ -161,6 +205,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
     setSavingConfig(false)
     if (d.status === 'success') {
       setConfig(d.form_data)
+      setData((x) => ({ ...x, form_data: d.form_data }))  // saved copy: unsaved badge, LIVE/PAPER badge
       loadMargin()  // lot size / OTM offset / leverage may have changed
       // crypto: the dashboard lists only the saved "Trade in" instrument — reload
       // so switching Options <-> Futures shows the right orders/totals at once
@@ -287,20 +332,70 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', color: '#d1d4dc', padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} />
-        <button onClick={load} style={{ ...input, cursor: 'pointer', width: 'auto' }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
-        <span style={{ fontSize: 13 }}>Today: <b style={{ color: profitColor(data.allprofit) }}>{data.allprofit}</b></span>
-        <span style={{ fontSize: 13 }}>Last 300d: <b style={{ color: profitColor(data.totalProfit) }}>{data.totalProfit}</b></span>
-        {error && <span style={{ color: '#ef5350', fontSize: 12 }}>{error}</span>}
-      </div>
+      {(() => {
+        const live = !!data.form_data?.withmoney
+        const auto = !!data.form_data?.auto_place_order
+        const today = parseProfit(data.allprofit)
+        const total = parseProfit(data.totalProfit)
+        const mw = data.monthwisedata
+        const winRate = mw?.totalOrder ? Math.round(((mw.totalOrder - mw.stoplossOrder) / mw.totalOrder) * 100) : null
+        const open = (data.storeorder || []).filter((o) => term(o) === 'hold').length
+        const cur = market === 'crypto' ? '' : '₹'
+        const monthName = new Date(`${month}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+        const fmt = (v) => { const a = Math.abs(v); return `${v >= 0 ? '+' : '−'}${cur}${a >= 1000 ? Math.round(a).toLocaleString('en-IN') : a.toFixed(2)}` }
+        const card = (label, value, sub, color = '#fff', glow) => (
+          <div style={{ background: '#1e222d', border: `1px solid ${glow ? `${glow}66` : '#2a2e39'}`, borderRadius: 10, padding: '10px 14px', minWidth: 0,
+            boxShadow: glow ? `0 0 24px ${glow}22` : 'none' }}>
+            <div style={{ color: '#787b86', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+            {sub && <div style={{ fontSize: 12, color: '#787b86', marginTop: 2 }}>{sub}</div>}
+          </div>)
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="fade-up">
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <b style={{ fontSize: 19, color: '#fff' }}>{market === 'crypto' ? '⚡ Crypto trading' : '🤖 India trading'}</b>
+              <span title={live ? '"With money" is on: orders go to your broker' : '"With money" is off: simulated orders on live prices'}
+                style={{ padding: '3px 12px', borderRadius: 14, fontSize: 12, fontWeight: 800, letterSpacing: 0.5,
+                  color: live ? '#fff' : '#4fc3f7', background: live ? 'linear-gradient(135deg,#ef5350,#ff7043)' : 'rgba(79,195,247,.12)', border: live ? 0 : '1px solid #4fc3f7' }}>
+                {live ? '💰 LIVE MONEY' : '📝 PAPER MODE'}
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: auto ? '#26a69a' : '#787b86' }}>
+                <span className={auto ? 'pulse-dot' : ''} style={{ width: 8, height: 8, borderRadius: 4, background: auto ? '#26a69a' : '#4a4f5c' }} />
+                {auto ? 'Auto strategy running' : 'Auto strategy off'}
+              </span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="date" value={date} onChange={(e) => { if (!e.target.value) return; setDate(e.target.value); setMonth(e.target.value.slice(0, 7)) }} style={{ ...input, width: 'auto' }} aria-label="Day" />
+                <button onClick={load} style={{ ...input, cursor: 'pointer', width: 'auto' }}>{loading ? 'Refreshing…' : '⟳ Refresh'}</button>
+              </span>
+            </div>
+            {error && <span style={{ color: '#ef5350', fontSize: 12 }}>{error}</span>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 170px), 1fr))', gap: 10 }}>
+              {today ? card(date === new Date().toISOString().slice(0, 10) ? "Today's P&L" : `P&L ${date}`, fmt(today.pnl), `${today.orders} orders · ${today.losses} SL${today.brokerage != null ? ` · brokerage ${Math.round(today.brokerage)}` : ''}`, today.pnl >= 0 ? '#26a69a' : '#ef5350', today.pnl >= 0 ? '#26a69a' : '#ef5350')
+                : card('Today', data.allprofit ?? '—')}
+              {card('Open positions', open, open ? 'managed by the exit bot' : 'nothing open', open ? '#ffb74d' : '#fff')}
+              {mw && card(`${monthName} P&L`, fmt(Number(mw.totalProfit) || 0), `${mw.totalOrder} orders · ${mw.stoplossOrder} losing`, (Number(mw.totalProfit) || 0) >= 0 ? '#26a69a' : '#ef5350')}
+              {winRate != null && (
+                <div style={{ background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 52, height: 52, borderRadius: 26, flexShrink: 0, background: `conic-gradient(${winRate >= 50 ? '#26a69a' : '#ef5350'} ${winRate * 3.6}deg, #2a2e39 0)`, display: 'grid', placeItems: 'center' }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 20, background: '#1e222d', display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 800 }}>{winRate}%</div>
+                  </div>
+                  <div><div style={{ color: '#787b86', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 }}>Win rate</div><div style={{ fontSize: 12, color: '#787b86' }}>{mw.totalOrder - mw.stoplossOrder} of {mw.totalOrder} trades in {monthName} closed in profit</div></div>
+                </div>)}
+              {total ? card('Last 300 days', fmt(total.pnl), `${total.orders} orders · ${total.losses} SL`, total.pnl >= 0 ? '#26a69a' : '#ef5350') : card('Last 300 days', data.totalProfit ?? '—')}
+            </div>
+          </div>)
+      })()}
 
-      <div style={box}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <b>Bot config</b>
-          <button onClick={saveConfig} disabled={savingConfig} style={{ ...input, cursor: 'pointer', width: 'auto', background: '#2a2e39' }}>
-            {savingConfig ? 'Saving…' : 'Save config'}
-          </button>
+      <div style={box} className="tp-config">
+        <div style={{ marginBottom: 12 }}>
+          <Title icon="⚙️" right={<>
+            {JSON.stringify(config) !== JSON.stringify(data.form_data) && <span style={{ color: '#ffb74d', fontSize: 12 }}>● unsaved changes</span>}
+            <button onClick={saveConfig} disabled={savingConfig}
+              style={{ border: 0, borderRadius: 8, padding: '7px 16px', fontWeight: 700, color: '#fff', cursor: 'pointer', background: 'linear-gradient(135deg, #2962ff, #7c4dff)', boxShadow: '0 3px 12px rgba(41,98,255,.35)' }}>
+              {savingConfig ? 'Saving…' : '💾 Save config'}
+            </button>
+          </>}>Bot settings</Title>
+          <div style={{ color: '#787b86', fontSize: 12 }}>Switch markets on or off, set size and risk. Changes apply after Save.</div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10, fontSize: 13 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid #ef5350', borderRadius: 4, padding: '4px 8px' }}>
@@ -339,15 +434,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 <input type="checkbox" checked={!!config.send_alert} onChange={(e) => setConfig({ ...config, send_alert: e.target.checked })} />
                 Send alert
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <input type="checkbox" checked={!!config.NIFTY} onChange={(e) => setConfig({ ...config, NIFTY: e.target.checked })} />
                 Trade NIFTY <IndexStatus name="NIFTY" state={marketState} alerts={alerts} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <input type="checkbox" checked={!!config.BANKNIFTY} onChange={(e) => setConfig({ ...config, BANKNIFTY: e.target.checked })} />
                 Trade BANKNIFTY <IndexStatus name="BANKNIFTY" state={marketState} alerts={alerts} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <input type="checkbox" checked={!!config.SENSEX} onChange={(e) => setConfig({ ...config, SENSEX: e.target.checked })} />
                 Trade SENSEX <IndexStatus name="SENSEX" state={marketState} alerts={alerts} />
               </label>
@@ -355,15 +450,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
           )}
           {market === 'crypto' && (
             <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <input type="checkbox" checked={!!config.BTCUSD} onChange={(e) => setConfig({ ...config, BTCUSD: e.target.checked })} />
                 Trade BTC <IndexStatus name="BTC" state={marketState} alerts={alerts} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <input type="checkbox" checked={!!config.ETHUSD} onChange={(e) => setConfig({ ...config, ETHUSD: e.target.checked })} />
                 Trade ETH <IndexStatus name="ETH" state={marketState} alerts={alerts} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 , flexWrap: 'wrap' }}
                 title="Gold (Tether Gold) perpetual on Delta Exchange. Trades only when Trade in = Futures.">
                 <input type="checkbox" checked={!!config.XAUTUSD} onChange={(e) => setConfig({ ...config, XAUTUSD: e.target.checked })} />
                 Trade Gold (XAUT, futures only) <IndexStatus name="XAUT" state={marketState} alerts={alerts} />
@@ -580,7 +675,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       {brokerMode && (
         <div style={box}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <b>Positions — from broker (live money)</b>
+            <Title icon="📍">Positions — from broker (live money)</Title>
             <span style={{ fontSize: 12, color: '#787b86' }}>AngelOne · refreshes every 8s</span>
           </div>
           {broker.error && <div style={{ color: '#ef5350', fontSize: 12, marginTop: 6 }}>Broker: {broker.error}</div>}
@@ -654,7 +749,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {brokerMode && broker.orders.length > 0 && (
         <div style={box}>
-          <b>Trade history — from broker order book (today)</b>
+          <Title icon="🧾">Trade history — from broker order book (today)</Title>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
@@ -687,8 +782,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
         // India: NIFTY / BANKNIFTY / SENSEX always, ATM CE/PE at the current spot,
         // qty = lots x lot size, margin = premium x qty (webviewdataapi.margin_estimate).
         <div style={box}>
-          <b>Margin required per order</b>
-          <span style={{ fontSize: 11, color: '#787b86' }}> · prices at {margin.at} · refresh the page for new prices</span>
+          <Title icon="💳" right={<span style={{ fontSize: 11, color: '#787b86' }}>prices at {margin.at} · refresh the page for new prices</span>}>Margin required per order</Title>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
@@ -733,8 +827,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {margin && market === 'crypto' && (
         <div style={box}>
-          <b>Margin required per order</b>
-          <span style={{ fontSize: 11, color: '#787b86' }}> · prices at {margin.at} · refresh the page for new prices</span>
+          <Title icon="💳" right={<span style={{ fontSize: 11, color: '#787b86' }}>prices at {margin.at} · refresh the page for new prices</span>}>Margin required per order</Title>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 6, fontSize: 13 }}>
             {Object.entries(margin.coins || {}).map(([name, m]) => (
               <span key={name} title={m.legs ? m.legs.map((l) => `${l.symbol}: ${l.premium} x ${l.qty} = ${money(l.margin)}`).join('\n') : m.error || ''}>
@@ -757,7 +850,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
       {!brokerMode && data.storeorder?.length > 0 && (
         <div style={box}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <b>Open / recent orders</b>
+            <Title icon="📂">Open / recent orders</Title>
             <button
               onClick={deleteAllOrders} disabled={savingOrder === '__all__'}
               style={{ ...input, cursor: 'pointer', width: 'auto', borderColor: '#ef5350', color: '#ef5350' }}
@@ -772,7 +865,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                 <th style={th}>Profit</th><th style={th}>Stoploss pt</th><th style={th}>Target pt</th><th style={th} colSpan={4}></th>
               </tr></thead>
               <tbody>
-                {data.storeorder.map((o) => {
+                {[...data.storeorder].sort((a, b) => (term(b) === 'hold') - (term(a) === 'hold')).map((o) => {
                   const edit = orderEdits[o.symbol] || { stoplosspoint: o.stoplosspoint, targetpoint: o.targetpoint }
                   const busy = savingOrder === o.symbol || savingOrder === '__all__'
                   // Entry time of this symbol's newest trade in today's history, so
@@ -783,12 +876,15 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                   const hi = oAlert ? ORDER_ALERT_STYLE[oAlert.kind].color : null
                   return (
                     <Fragment key={o.symbol}>
-                    <tr style={hi ? { background: `${hi}1f`, boxShadow: `inset 3px 0 0 ${hi}` } : undefined}>
-                      <td style={td}>{o.symbol}</td>
+                    <tr style={hi ? { background: `${hi}1f`, boxShadow: `inset 3px 0 0 ${hi}` } : term(o) === 'hold' ? { boxShadow: 'inset 3px 0 0 #26a69a' } : { opacity: 0.72 }}>
+                      <td style={{ ...td, fontWeight: 600 }}>{o.symbol}</td>
                       <td style={td}>{o.orderstatus}</td>
-                      <td style={td}>{o.orderterm}</td>
+                      <td style={td}>{term(o) === 'hold'
+                        ? <span style={{ padding: '1px 9px', borderRadius: 10, fontSize: 11, fontWeight: 800, color: '#26a69a', background: 'rgba(38,166,154,.15)', boxShadow: '0 0 10px rgba(38,166,154,.35)' }}>● OPEN</span>
+                        : <span style={{ padding: '1px 9px', borderRadius: 10, fontSize: 11, color: '#787b86', background: '#2a2e39' }}>{o.orderterm || '—'}</span>}</td>
                       <td style={td}>{o.trend}</td>
-                      <td style={{ ...td, color: profitColor(o.profit) }}>{fmtPnl(o.profit, market, o.symbol)}</td>
+                      <td style={td}><span style={{ padding: '2px 8px', borderRadius: 6, fontWeight: 700, color: profitColor(o.profit),
+                        background: Number(o.profit) > 0 ? 'rgba(38,166,154,.12)' : Number(o.profit) < 0 ? 'rgba(239,83,80,.12)' : 'transparent' }}>{fmtPnl(o.profit, market, o.symbol)}</span></td>
                       <td style={td}>
                         <input style={input} value={edit.stoplosspoint} onChange={(e) => setOrderEdits({ ...orderEdits, [o.symbol]: { ...edit, stoplosspoint: e.target.value } })} />
                       </td>
@@ -834,7 +930,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {market === 'crypto' && data.instrument !== 'futures' && (
         <div style={box}>
-          <b>Search options contracts</b>
+          <Title icon="🔎">Search options contracts</Title>
           <div style={{ color: '#787b86', fontSize: 11, marginTop: 2, marginBottom: 8 }}>
             Real, currently-live DeltaEx contracts — not TradingView (it only lists CME's unrelated bitcoin options).
           </div>
@@ -886,7 +982,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {data.store?.length > 0 && (
         <div style={box}>
-          <b>Live signals</b>
+          <Title icon="📡" right={<span style={{ fontSize: 11, color: '#787b86' }}>click a row for the reasoning</span>}>Live signals</Title>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
@@ -903,7 +999,8 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
                         style={{ cursor: 'pointer' }}
                       >
                         <td style={td}>{s.symbol}</td>
-                        <td style={{ ...td, color: s.trend === 'buy' ? '#26a69a' : s.trend === 'sell' ? '#ef5350' : '#d1d4dc' }}>{s.trend}</td>
+                        <td style={td}><span style={{ padding: '1px 9px', borderRadius: 10, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                          color: s.trend === 'buy' ? '#26a69a' : s.trend === 'sell' ? '#ef5350' : '#d1d4dc', background: s.trend === 'buy' ? 'rgba(38,166,154,.15)' : s.trend === 'sell' ? 'rgba(239,83,80,.15)' : '#2a2e39' }}>{s.trend || '—'}</span></td>
                         <td style={td}>{s.mainsignal}</td>
                         <td style={td}>{s.current_price}</td>
                         <td style={td}>{s.support}</td>
@@ -949,7 +1046,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {!brokerMode && data.fetchdata?.length > 0 && (
         <div style={box}>
-          <b>Trade history — {date}</b>
+          <Title icon="🧾">Trade history — {date}</Title>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr>
@@ -982,8 +1079,24 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
 
       {data.monthwisedata?.dailyBreakdown && (
         <div style={box}>
-          <input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ ...input, marginRight: 8 }} />
-          <b>{month} — {data.monthwisedata.totalOrder} orders, {data.monthwisedata.stoplossOrder} stoplosses, total <span style={{ color: profitColor(data.monthwisedata.totalProfit) }}>{data.monthwisedata.totalProfit}</span></b>
+          <Title icon="📅" right={<>
+            {(() => {
+              const shift = (n) => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }
+              const thisMonth = new Date().toISOString().slice(0, 7)
+              return <>
+                <button onClick={() => shift(-1)} style={{ ...input, width: 'auto', cursor: 'pointer' }} title="Previous month" aria-label="Previous month">‹ Prev</button>
+                <input type="month" value={month} max={thisMonth} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ ...input, width: 'auto' }} aria-label="Month" />
+                <button onClick={() => shift(1)} disabled={month >= thisMonth} style={{ ...input, width: 'auto', cursor: 'pointer' }} title="Next month" aria-label="Next month">Next ›</button>
+                {month !== thisMonth && <button onClick={() => setMonth(thisMonth)} style={{ ...input, width: 'auto', cursor: 'pointer', color: '#2962ff' }}>This month</button>}
+                {loading && <span style={{ color: '#787b86', fontSize: 12 }}>loading…</span>}
+              </>
+            })()}
+          </>}>
+            Month calendar — {data.monthwisedata.totalOrder} orders, {data.monthwisedata.stoplossOrder} losing, total <span style={{ color: profitColor(data.monthwisedata.totalProfit) }}>{data.monthwisedata.totalProfit}</span>
+          </Title>
+          <MonthCalendar month={month} breakdown={data.monthwisedata.dailyBreakdown}
+            fmt={(v) => { const a = Math.abs(v); return `${v >= 0 ? '+' : '−'}${market === 'crypto' ? '' : '₹'}${a >= 1000 ? `${(a / 1000).toFixed(1)}k` : a.toFixed(0)}` }} />
+          <details style={{ marginTop: 10 }}><summary style={{ color: '#787b86', fontSize: 12 }}>Show as table</summary>
           <div style={{ overflowX: 'auto', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr><th style={th}>Date</th><th style={th}>Day</th><th style={th}>Orders</th><th style={th}>Stoplosses</th><th style={th}>Profit</th></tr></thead>
@@ -998,6 +1111,7 @@ export default function TradingPanel({ onViewOnChart, market = 'india' }) {
               </tbody>
             </table>
           </div>
+          </details>
         </div>
       )}
     </div>

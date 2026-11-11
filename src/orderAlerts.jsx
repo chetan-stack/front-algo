@@ -99,7 +99,7 @@ export function IndexStatus({ name, state, alerts }) {
     alert && `\n🔔 ${alert.ts.slice(11, 16)} ${MARKET_ALERT_LABEL[alert.kind]}: ${alert.text}`,
   ].filter(Boolean).join('\n')
   return (
-    <span title={title} style={{ fontSize: 11, marginLeft: 4, color, whiteSpace: 'nowrap' }}>
+    <span title={title} style={{ fontSize: 11, marginLeft: 4, color, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
       {stateText && <>{stateText}{s.delayed ? ' ⏱' : ''}</>}
       {alert && <span style={{ color: '#f0b90b' }}>{stateText ? ' · ' : ''}🔔 {MARKET_ALERT_LABEL[alert.kind]} {alert.ts.slice(11, 16)}</span>}
     </span>

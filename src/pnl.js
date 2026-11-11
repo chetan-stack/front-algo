@@ -14,3 +14,9 @@ export function fmtPnl(value, market, symbol) {
   }
   return n.toFixed(2)
 }
+
+// Dashboard summary text "123.5 - no. of order: 5 - brokreg: 250- stoploss: 2" -> numbers (null if unparsable).
+export function parseProfit(s) {
+  const m = /^(-?[\d.]+) - no\. of order: (\d+)(?:.*brokreg: (-?[\d.]+))?.*stoploss: (\d+)/.exec(String(s ?? ''))
+  return m ? { pnl: Number(m[1]), orders: Number(m[2]), brokerage: m[3] == null ? null : Number(m[3]), losses: Number(m[4]) } : null
+}
